@@ -40,11 +40,138 @@ let activeSpeciesSuggestionIndex = -1;
 let speciesSuggestionHideTimer = null;
 const BOX_CAPACITY = 30;
 const MAX_SPECIES_SUGGESTIONS = 5;
+const PERSISTED_SAVE_STORAGE_KEY = 'rr-save-hack.persisted-save';
 
 // Updates the shared status banner so file-load and export steps stay obvious.
 function setStatus(message, tone = 'info') {
   elements.statusBanner.textContent = message;
   elements.statusBanner.className = `status-banner ${tone}`;
+}
+
+// Encodes one save buffer into base64 so the current edited save fits in localStorage cleanly.
+function bytesToBase64(bytes) {
+  const chunkSize = 0x8000;
+  let binary = '';
+
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.subarray(offset, offset + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+
+  return btoa(binary);
+}
+
+// Decodes the stored base64 payload back into raw save bytes during startup restore.
+function base64ToBytes(value) {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  return bytes;
+}
+
+// Removes the last persisted save snapshot when the editor no longer has a valid working save.
+function clearPersistedSave() {
+  try {
+    localStorage.removeItem(PERSISTED_SAVE_STORAGE_KEY);
+  } catch (error) {
+    console.warn('Unable to clear persisted RR save hack data.', error);
+  }
+}
+
+// Serializes the current working save and selection so a refresh can restore the editor state.
+function persistWorkingSave() {
+  if (!workingSave) {
+    clearPersistedSave();
+    return;
+  }
+
+  try {
+    const bytes = exportEditedSave(workingSave);
+    localStorage.setItem(
+      PERSISTED_SAVE_STORAGE_KEY,
+      JSON.stringify({
+        fileName: workingSave.fileName,
+        saveBase64: bytesToBase64(bytes),
+        selectedBoxNumber,
+        selectedTarget
+      })
+    );
+  } catch (error) {
+    console.warn('Unable to persist the current RR save hack session.', error);
+  }
+}
+
+// Validates one restored selection object before reusing it in the live editor state.
+function normalizePersistedTarget(target, boxNumber) {
+  if (target?.kind === 'party' && Number.isInteger(target.slotIndex) && target.slotIndex >= 0 && target.slotIndex < 6) {
+    return { kind: 'party', slotIndex: target.slotIndex };
+  }
+
+  if (
+    target?.kind === 'box'
+    && Number.isInteger(target.boxNumber)
+    && target.boxNumber >= 1
+    && target.boxNumber <= 25
+    && Number.isInteger(target.slotIndex)
+    && target.slotIndex >= 0
+    && target.slotIndex < BOX_CAPACITY
+  ) {
+    return {
+      kind: 'box',
+      boxNumber: target.boxNumber,
+      slotIndex: target.slotIndex
+    };
+  }
+
+  return { kind: 'party', slotIndex: 0 };
+}
+
+// Rehydrates the last edited save from localStorage after the repo data finishes loading.
+async function restorePersistedSave() {
+  let rawSnapshot = null;
+
+  try {
+    rawSnapshot = localStorage.getItem(PERSISTED_SAVE_STORAGE_KEY);
+  } catch (error) {
+    console.warn('Unable to read persisted RR save hack data.', error);
+    return false;
+  }
+
+  if (!rawSnapshot) {
+    return false;
+  }
+
+  try {
+    const snapshot = JSON.parse(rawSnapshot);
+    if (typeof snapshot?.saveBase64 !== 'string') {
+      throw new Error('Missing persisted save payload.');
+    }
+
+    const restoredBytes = base64ToBytes(snapshot.saveBase64);
+    const restoredFileName = typeof snapshot.fileName === 'string' && snapshot.fileName
+      ? snapshot.fileName
+      : 'rr-save-hack.autosave.sav';
+
+    workingSave = await loadSaveFile(new File([restoredBytes], restoredFileName), coreData);
+    selectedBoxNumber = Number.isInteger(snapshot.selectedBoxNumber)
+      && snapshot.selectedBoxNumber >= 1
+      && snapshot.selectedBoxNumber <= 25
+      ? snapshot.selectedBoxNumber
+      : 1;
+    selectedTarget = normalizePersistedTarget(snapshot.selectedTarget, selectedBoxNumber);
+    if (selectedTarget.kind === 'box') {
+      selectedBoxNumber = selectedTarget.boxNumber;
+    }
+    return true;
+  } catch (error) {
+    console.warn('Unable to restore persisted RR save hack data.', error);
+    clearPersistedSave();
+    return false;
+  }
 }
 
 // Returns the display label used for one species id in the UI.
@@ -343,6 +470,7 @@ function renderPartyGrid() {
     button.replaceChildren(label, name, subtext);
     button.addEventListener('click', () => {
       selectedTarget = { kind: 'party', slotIndex: slot.slotIndex };
+      persistWorkingSave();
       renderAll();
     });
     elements.partyGrid.appendChild(button);
@@ -374,6 +502,7 @@ function renderBoxTabs() {
     button.textContent = `Box ${box.boxNumber} (${occupied})`;
     button.addEventListener('click', () => {
       selectedBoxNumber = box.boxNumber;
+      persistWorkingSave();
       renderAll();
     });
     elements.boxTabs.appendChild(button);
@@ -425,6 +554,7 @@ function renderBoxGrid() {
         boxNumber: currentBox.boxNumber,
         slotIndex: slot.slotIndex
       };
+      persistWorkingSave();
       renderAll();
     });
     elements.boxGrid.appendChild(button);
@@ -539,11 +669,13 @@ async function handleSaveUpload(event) {
     selectedBoxNumber = 1;
     selectedTarget = { kind: 'party', slotIndex: 0 };
     renderAll();
+    persistWorkingSave();
     setStatus(`Loaded ${file.name}. Click any team or box slot, type a Pokemon name, then apply or export.`, 'success');
   } catch (error) {
     workingSave = null;
     selectedTarget = null;
     renderAll();
+    clearPersistedSave();
     setStatus(error.message || 'Unable to read that save file.', 'error');
   }
 }
@@ -569,6 +701,7 @@ function handleApplySpecies() {
     }
 
     renderAll();
+    persistWorkingSave();
     setStatus(`Applied ${getSpeciesName(mon.ID)} to ${formatTargetLabel(selectedTarget)}.`, 'success');
   } catch (error) {
     setStatus(error.message || 'Unable to apply that Pokemon.', 'error');
@@ -601,7 +734,14 @@ async function start() {
   try {
     coreData = await loadCoreData();
     renderAll();
-    setStatus('Repo data loaded. Choose a save file to start editing.', 'success');
+    const restored = await restorePersistedSave();
+    renderAll();
+    setStatus(
+      restored
+        ? `Restored ${workingSave.fileName} from browser storage.`
+        : 'Repo data loaded. Choose a save file to start editing.',
+      'success'
+    );
   } catch (error) {
     setStatus(error.message || 'Unable to load repo data.', 'error');
     throw error;
