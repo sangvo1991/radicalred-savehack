@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RR Save Hack</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="layout">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">Save Hack</p>
+        <h1>Radical Red Team and Box Editor</h1>
+        <p class="hero-copy">
+          Load a <code>.sav</code>, pick a team slot or box slot, enter only a Pokemon name, and export a new save.
+          Generated Pokemon default to level 5, use your trainer ID, and respect random ability / learnset / Hardcore rules from the loaded save.
+        </p>
+      </div>
+      <div class="hero-actions">
+        <label class="upload-button" for="saveFileInput">Load Save</label>
+        <input id="saveFileInput" type="file" accept=".sav">
+        <button id="exportSaveButton" type="button" disabled>Export Edited Save</button>
+      </div>
+    </header>
+
+    <section id="statusBanner" class="status-banner info">
+      Loading repo data...
+    </section>
+
+    <section class="metadata-card">
+      <div class="metadata-block">
+        <span class="metadata-label">Trainer</span>
+        <strong id="trainerName">-</strong>
+      </div>
+      <div class="metadata-block">
+        <span class="metadata-label">Trainer ID</span>
+        <strong id="trainerId">-</strong>
+      </div>
+      <div class="metadata-block">
+        <span class="metadata-label">Flags</span>
+        <strong id="saveFlags">-</strong>
+      </div>
+      <div class="metadata-block">
+        <span class="metadata-label">Species Pool</span>
+        <strong id="speciesPool">-</strong>
+      </div>
+    </section>
+
+    <section class="workspace">
+      <section class="panel panel-main">
+        <div class="panel-header">
+          <div>
+            <p class="panel-eyebrow">Current Team</p>
+            <h2>Party Slots</h2>
+          </div>
+          <span id="partyCountBadge" class="badge">0 / 6 occupied</span>
+        </div>
+        <div id="partyGrid" class="party-grid"></div>
+      </section>
+
+      <aside class="panel panel-side">
+        <div class="panel-header">
+          <div>
+            <p class="panel-eyebrow">Editor</p>
+            <h2>Selected Slot</h2>
+          </div>
+        </div>
+
+        <div class="editor-row">
+          <span class="editor-label">Target</span>
+          <strong id="selectedTargetLabel">No slot selected</strong>
+        </div>
+
+        <div class="editor-row">
+          <span class="editor-label">Current Pokemon</span>
+          <strong id="selectedCurrentPokemon">-</strong>
+        </div>
+
+        <label class="field">
+          <span>Pokemon Name</span>
+          <div class="field-autocomplete">
+            <input id="speciesNameInput" type="text" autocomplete="off" placeholder="Example: Raichu">
+            <div id="speciesSuggestionList" class="species-suggestion-list" hidden></div>
+          </div>
+        </label>
+
+        <div class="editor-actions">
+          <button id="applySpeciesButton" type="button" disabled>Apply To Selected Slot</button>
+        </div>
+
+        <div class="details-stack">
+          <section class="detail-card">
+            <h3>Current Slot Detail</h3>
+            <div id="currentSlotDetail" class="detail-body muted">
+              Load a save and click a team or box slot.
+            </div>
+          </section>
+
+          <section class="detail-card">
+            <h3>Generated Replacement</h3>
+            <div id="replacementPreview" class="detail-body muted">
+              Type a Pokemon name to preview the generated entry.
+            </div>
+          </section>
+        </div>
+      </aside>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <div>
+          <p class="panel-eyebrow">Pokemon Storage</p>
+          <h2>PC Boxes</h2>
+        </div>
+        <span id="boxCountBadge" class="badge">0 occupied</span>
+      </div>
+      <div id="boxTabs" class="box-tabs"></div>
+      <div id="boxGrid" class="box-grid"></div>
+    </section>
+  </main>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
