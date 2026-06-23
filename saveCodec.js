@@ -6,6 +6,8 @@ const SAVE_SECTOR_COUNT = 14;
 const SAVE_SLOT_COUNT = 2;
 const SAVE_SECTOR_SIZE = 0x1000;
 const SAVE_SECTOR_DATA_SIZE = 0x0FF4;
+const TRAINER_INFO_LOGICAL_OFFSET = 0x0000;
+const GAME_SPECIFIC_LOGICAL_OFFSET = SAVE_SECTOR_DATA_SIZE * 4;
 const EXTRA_BOX_SECTOR_DATA_SIZE = 0x0FF0;
 const SAVE_SECTOR_CHECKSUM_SIZES = [
   0x0F24,
@@ -30,7 +32,6 @@ const SAVE_BLOCK1_SIZE = SAVE_BLOCK1_CHUNK_SIZES.reduce((sum, size) => sum + siz
 const POKEMON_STORAGE_SIZE = POKEMON_STORAGE_CHUNK_SIZES.reduce((sum, size) => sum + size, 0);
 const EXTRA_BOX_STORAGE_SIZE = EXTRA_BOX_SECTOR_DATA_SIZE * 2;
 const EXTRA_BOX_SECTOR_IDS = [30, 31];
-const SAVE_BLOCK1_FLAGS_OFFSET = 0x0EE0;
 const PARTY_COUNT_SAVE_BLOCK1_OFFSET = 0x0034;
 const PARTY_POKEMON_SAVE_BLOCK1_OFFSET = 0x0038;
 const PARTY_POKEMON_SIZE = 100;
@@ -269,6 +270,25 @@ function buildSaveBlocks(fileBytes, activeSectorOffsets) {
   return { saveBlock1, saveBlock2, pokemonStorage, extraBoxStorage };
 }
 
+// Rebuilds the same 14-sector logical save view that the main site parser reads from.
+function buildLogicalSaveData(fileBytes, activeSectorOffsets) {
+  const logicalBytes = new Uint8Array(SAVE_SECTOR_COUNT * SAVE_SECTOR_DATA_SIZE);
+
+  for (let sectorId = 0; sectorId < SAVE_SECTOR_COUNT; sectorId += 1) {
+    const sectorOffset = activeSectorOffsets[sectorId];
+    const logicalOffset = sectorId * SAVE_SECTOR_DATA_SIZE;
+    logicalBytes.set(
+      fileBytes.subarray(sectorOffset, sectorOffset + SAVE_SECTOR_DATA_SIZE),
+      logicalOffset
+    );
+  }
+
+  return {
+    bytes: logicalBytes,
+    view: new DataView(logicalBytes.buffer)
+  };
+}
+
 // Writes the edited save chunks back into their physical sectors with RR's checksum sizes.
 function scatterSaveBlocks(fileBytes, state) {
   const { activeSectorOffsets, saveBlock1, saveBlock2, pokemonStorage, extraBoxStorage } = state;
@@ -311,14 +331,14 @@ function scatterSaveBlocks(fileBytes, state) {
 }
 
 // Reads the event flags that reveal which deterministic species pool the save uses.
-function readSpeciesRandomizerEventFlags(saveBlock1) {
+function readSpeciesRandomizerEventFlags(logicalSaveView) {
   return Object.fromEntries(
     RANDOMIZER_SPECIES_EVENT_FLAGS.map(flagId => {
-      const byteIndex = SAVE_BLOCK1_FLAGS_OFFSET + (flagId >> 3);
+      const byteIndex = TRAINER_INFO_LOGICAL_OFFSET + EVENT_FLAG_BASE + (flagId >> 3);
       const bitIndex = flagId & 7;
       return [
         `0x${flagId.toString(16).toLowerCase()}`,
-        ((saveBlock1[byteIndex] >> bitIndex) & 1) === 1
+        ((logicalSaveView.getUint8(byteIndex) >> bitIndex) & 1) === 1
       ];
     })
   );
@@ -341,16 +361,19 @@ function inferSpeciesRandomizerBranchFromFlags(eventFlags) {
   return null;
 }
 
-// Extracts trainer metadata and randomizer flags from the active save blocks.
-function parseSaveMetadata(saveBlocks, coreData) {
+// Extracts trainer metadata and randomizer flags from the same logical layout as the main site.
+function parseSaveMetadata(logicalSave, coreData) {
   const trainerName = decodeSaveString(
-    saveBlocks.saveBlock2,
-    NAME_OFFSET,
+    logicalSave.bytes,
+    TRAINER_INFO_LOGICAL_OFFSET + NAME_OFFSET,
     8,
     coreData.abilityRandomizer.CHARACTER_ENCODINGS
   );
-  const trainedId = readUint32LE(saveBlocks.saveBlock2, TRAINED_ID_OFFSET);
-  const speciesEventFlags = readSpeciesRandomizerEventFlags(saveBlocks.saveBlock1);
+  const trainedId = logicalSave.view.getUint32(TRAINER_INFO_LOGICAL_OFFSET + TRAINED_ID_OFFSET, true);
+  const speciesEventFlags = readSpeciesRandomizerEventFlags(logicalSave.view);
+  const progression = typeof globalThis.saveProgression?.readStoryFlagsFromLogicalSave === 'function'
+    ? globalThis.saveProgression.readStoryFlagsFromLogicalSave(logicalSave.view)
+    : { summary: 'Unknown' };
   const branchKey = inferSpeciesRandomizerBranchFromFlags(speciesEventFlags);
   const branches = coreData.randomizerMetadata.RANDOMIZER_SPECIES_BRANCHES || {};
   const pools = coreData.randomizerMetadata.RANDOMIZER_SPECIES_POOLS || {};
@@ -366,14 +389,15 @@ function parseSaveMetadata(saveBlocks, coreData) {
   return {
     name: trainerName,
     trainedId,
-    playerGender: saveBlocks.saveBlock2[0x08] || 0,
-    hardmode: (saveBlocks.saveBlock1[HARDMODE_BITFLAG] & 0x10) !== 0,
-    restricted: (saveBlocks.saveBlock1[RESTRICTED_BITFLAG] & 0x40) !== 0,
+    playerGender: logicalSave.view.getUint8(TRAINER_INFO_LOGICAL_OFFSET + 0x08) || 0,
+    hardmode: (logicalSave.view.getUint8(GAME_SPECIFIC_LOGICAL_OFFSET + HARDMODE_BITFLAG) & 0x10) !== 0,
+    restricted: (logicalSave.view.getUint8(GAME_SPECIFIC_LOGICAL_OFFSET + RESTRICTED_BITFLAG) & 0x40) !== 0,
+    progression,
     random: {
-      scaledSpecies: (saveBlocks.saveBlock1[SCALED_SPECIES_BITFLAG] & 0x04) !== 0,
-      normalSpecies: (saveBlocks.saveBlock1[NORMAL_SPECIES_LEARNSET_ABILITY_BITFLAG] & 0x01) !== 0,
-      learnset: (saveBlocks.saveBlock1[NORMAL_SPECIES_LEARNSET_ABILITY_BITFLAG] & 0x02) !== 0,
-      abilities: (saveBlocks.saveBlock1[NORMAL_SPECIES_LEARNSET_ABILITY_BITFLAG] & 0x04) !== 0,
+      scaledSpecies: (logicalSave.view.getUint8(TRAINER_INFO_LOGICAL_OFFSET + SCALED_SPECIES_BITFLAG) & 0x04) !== 0,
+      normalSpecies: (logicalSave.view.getUint8(TRAINER_INFO_LOGICAL_OFFSET + NORMAL_SPECIES_LEARNSET_ABILITY_BITFLAG) & 0x01) !== 0,
+      learnset: (logicalSave.view.getUint8(TRAINER_INFO_LOGICAL_OFFSET + NORMAL_SPECIES_LEARNSET_ABILITY_BITFLAG) & 0x02) !== 0,
+      abilities: (logicalSave.view.getUint8(TRAINER_INFO_LOGICAL_OFFSET + NORMAL_SPECIES_LEARNSET_ABILITY_BITFLAG) & 0x04) !== 0,
       speciesBranchKey: branchKey,
       speciesPoolKey: poolKey,
       speciesEventFlags
@@ -653,12 +677,13 @@ export async function loadSaveFile(file, coreData) {
   const fileBytes = new Uint8Array(await file.arrayBuffer());
   const activeSectorOffsets = findActiveSectorOffsets(fileBytes);
   const saveBlocks = buildSaveBlocks(fileBytes, activeSectorOffsets);
+  const logicalSave = buildLogicalSaveData(fileBytes, activeSectorOffsets);
   const state = {
     fileName: file.name,
     fileBytes,
     activeSectorOffsets,
     ...saveBlocks,
-    metadata: parseSaveMetadata(saveBlocks, coreData)
+    metadata: parseSaveMetadata(logicalSave, coreData)
   };
   return hydrateSaveState(state, coreData);
 }

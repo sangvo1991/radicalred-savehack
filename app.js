@@ -6,7 +6,11 @@ import {
   normalizeMoveLookupKey,
   normalizeSpeciesLookupKey
 } from './coreData.js';
-import { buildPokemonBlueprint, isHardcoreMoveLegal } from './pokemonLogic.js';
+import {
+  buildPokemonBlueprint,
+  isHardcoreMoveLegal,
+  resolveAbilityPool
+} from './pokemonLogic.js';
 import {
   applyBoxMoveChange,
   applyPcItemChange,
@@ -30,6 +34,7 @@ const elements = {
   trainerId: document.getElementById('trainerId'),
   saveFlags: document.getElementById('saveFlags'),
   speciesPool: document.getElementById('speciesPool'),
+  progressionSummary: document.getElementById('progressionSummary'),
   partyCountBadge: document.getElementById('partyCountBadge'),
   boxCountBadge: document.getElementById('boxCountBadge'),
   partyGrid: document.getElementById('partyGrid'),
@@ -258,6 +263,23 @@ function createDetailLine(label, value) {
 
   line.replaceChildren(key, body);
   return line;
+}
+
+// Resolves the current slot's visible abilities using the loaded save's randomizer rules.
+function formatSlotAbilityNames(slot) {
+  if (!workingSave || !slot?.present) {
+    return 'None';
+  }
+
+  const mon = coreData.species?.[slot.speciesId];
+  if (!mon) {
+    return 'Unknown';
+  }
+
+  const abilityPool = resolveAbilityPool(mon, workingSave.metadata, coreData);
+  return abilityPool.length
+    ? abilityPool.map(ability => ability.resolvedName).join(', ')
+    : 'None';
 }
 
 // Scores one suggestion against the current query so the five visible rows stay relevant.
@@ -1000,6 +1022,7 @@ function renderMetadata() {
     elements.trainerId.textContent = '-';
     elements.saveFlags.textContent = '-';
     elements.speciesPool.textContent = '-';
+    elements.progressionSummary.textContent = '-';
     return;
   }
 
@@ -1007,6 +1030,7 @@ function renderMetadata() {
   elements.trainerId.textContent = String(workingSave.metadata.trainedId || 0);
   elements.saveFlags.textContent = formatSaveFlags(workingSave.metadata);
   elements.speciesPool.textContent = workingSave.metadata.random.speciesPoolKey || 'None';
+  elements.progressionSummary.textContent = workingSave.metadata.progression?.summary || 'Unknown';
 }
 
 // Rebuilds the six-slot team grid and keeps the selected slot highlighted.
@@ -1199,6 +1223,7 @@ function renderCurrentSlotDetail() {
     createDetailLine('Species', slot.present ? getSpeciesName(slot.speciesId) : 'Empty'),
     createDetailLine('Trainer', slot.present ? `${slot.trainerName || '-'} / ${slot.trainerId}` : '-'),
     createDetailLine('Level', slot.present ? String(slot.level) : '-'),
+    createDetailLine('Abilities', formatSlotAbilityNames(slot)),
     createDetailLine('Moves', slot.present ? formatMoveNames(slot.moveIds) : 'None')
   ];
 
