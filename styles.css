@@ -167,11 +167,11 @@ button:disabled {
 
 .metadata-card {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
   width: 100%;
   margin: 0 auto 16px;
-  max-width: 1040px;
+  max-width: 1200px;
 }
 
 .metadata-block {
@@ -485,10 +485,6 @@ button:disabled {
 @media (max-width: 1120px) {
   .workspace {
     grid-template-columns: 1fr;
-  }
-
-  .metadata-card {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
