@@ -22,6 +22,13 @@ export function normalizeItemLookupKey(value) {
     .replace(/[^a-z0-9]+/g, '');
 }
 
+// Normalizes move names so move editors can resolve text input consistently.
+export function normalizeMoveLookupKey(value) {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+}
+
 // Returns the best matching species for the provided user input.
 export function lookupSpeciesByName(coreData, input) {
   const key = normalizeSpeciesLookupKey(input);

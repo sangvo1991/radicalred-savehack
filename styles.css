@@ -384,6 +384,28 @@ button:disabled {
   margin-bottom: 14px;
 }
 
+.inline-editor-section {
+  margin-bottom: 14px;
+  padding-top: 4px;
+}
+
+.inline-editor-section h3 {
+  margin: 0 0 10px;
+  color: var(--text);
+  font-size: 0.98rem;
+  font-weight: 600;
+}
+
+.move-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 10px;
+}
+
+.move-field {
+  margin-bottom: 0;
+}
+
 .details-stack {
   display: grid;
   gap: 10px;
@@ -499,6 +521,10 @@ button:disabled {
 
   .party-grid,
   .box-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .move-editor-grid {
     grid-template-columns: 1fr;
   }
 }

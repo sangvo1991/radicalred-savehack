@@ -116,6 +116,81 @@ export function isHardcoreMoveLegal(mon, moveId, coreData) {
   return state.restrictedSpeciesIds.has(mon.ID);
 }
 
+// Adds one learnable move to the editable pool after randomizer and Hardcore rules are applied.
+function pushEditableMoveOption(pool, byId, mon, saveMetadata, coreData, rawMoveId, sourceLabel, level = null) {
+  if (!rawMoveId) {
+    return;
+  }
+
+  const resolvedMoveId = resolveMoveId(rawMoveId, mon, saveMetadata, coreData);
+  if (!resolvedMoveId || !coreData.moves?.[resolvedMoveId]) {
+    return;
+  }
+
+  if (isHardcoreEnabled(saveMetadata) && !isHardcoreMoveLegal(mon, resolvedMoveId, coreData)) {
+    return;
+  }
+
+  if (byId.has(resolvedMoveId)) {
+    const existing = byId.get(resolvedMoveId);
+    if (existing.level === null && level !== null) {
+      existing.level = level;
+      existing.source = sourceLabel;
+    } else if (existing.level !== null && level !== null) {
+      existing.level = Math.min(existing.level, level);
+    }
+    return;
+  }
+
+  const move = coreData.moves[resolvedMoveId];
+  const detail = {
+    id: move.ID,
+    name: move.name,
+    pp: move.pp || 0,
+    source: sourceLabel,
+    level
+  };
+  byId.set(resolvedMoveId, detail);
+  pool.push(detail);
+}
+
+// Builds the full editable move pool for one species at its current level and save rules.
+export function buildEditableMovePool(mon, saveMetadata, coreData, level = 100) {
+  const pool = [];
+  const byId = new Map();
+
+  for (const [rawMoveId, moveLevel] of mon.levelupMoves || []) {
+    if (moveLevel > level) {
+      continue;
+    }
+    pushEditableMoveOption(pool, byId, mon, saveMetadata, coreData, rawMoveId, 'Level Up', moveLevel);
+  }
+
+  for (const tmIndex of mon.tmMoves || []) {
+    const tmMoveId = coreData.tmMoves?.[tmIndex];
+    pushEditableMoveOption(pool, byId, mon, saveMetadata, coreData, tmMoveId, 'TM/HM');
+  }
+
+  for (const tutorIndex of mon.tutorMoves || []) {
+    const tutorMoveId = coreData.tutorMoves?.[tutorIndex];
+    pushEditableMoveOption(pool, byId, mon, saveMetadata, coreData, tutorMoveId, 'Tutor');
+  }
+
+  for (const moveId of mon.eggMoves || []) {
+    pushEditableMoveOption(pool, byId, mon, saveMetadata, coreData, moveId, 'Egg');
+  }
+
+  for (const moveId of mon.eventMoves || []) {
+    pushEditableMoveOption(pool, byId, mon, saveMetadata, coreData, moveId, 'Event');
+  }
+
+  for (const moveId of mon.prevoMoves || []) {
+    pushEditableMoveOption(pool, byId, mon, saveMetadata, coreData, moveId, 'Pre-Evolution');
+  }
+
+  return pool;
+}
+
 // Builds the default level-up moveset a generated Pokemon should know at a target level.
 export function buildDefaultMoveset(mon, saveMetadata, coreData, level = 5) {
   const learnedMoves = [];

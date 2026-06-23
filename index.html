@@ -13,7 +13,7 @@
         <p class="eyebrow">Save Hack</p>
         <h1>Radical Red Team, Box, and Item Storage Editor</h1>
         <p class="hero-copy">
-          Load a <code>.sav</code>, edit team slots, PC boxes, and PC item storage, then export a new save.
+          Load a <code>.sav</code>, edit team slots, existing Pokemon moves, PC boxes, and PC item storage, then export a new save.
           Generated Pokemon default to level 5, use your trainer ID, and respect random ability / learnset / Hardcore rules from the loaded save.
         </p>
       </div>
@@ -89,6 +89,46 @@
           <button id="applySpeciesButton" type="button" disabled>Apply To Selected Slot</button>
         </div>
 
+        <section class="inline-editor-section">
+          <h3>Edit Existing Moves</h3>
+          <div class="move-editor-grid">
+            <label class="field move-field">
+              <span>Move 1</span>
+              <div class="field-autocomplete">
+                <input id="moveNameInput0" class="moveNameInput" data-move-slot="0" type="text" autocomplete="off" placeholder="Leave blank to clear">
+                <div id="moveSuggestionList0" class="species-suggestion-list" data-move-suggestions="0" hidden></div>
+              </div>
+            </label>
+            <label class="field move-field">
+              <span>Move 2</span>
+              <div class="field-autocomplete">
+                <input id="moveNameInput1" class="moveNameInput" data-move-slot="1" type="text" autocomplete="off" placeholder="Leave blank to clear">
+                <div id="moveSuggestionList1" class="species-suggestion-list" data-move-suggestions="1" hidden></div>
+              </div>
+            </label>
+            <label class="field move-field">
+              <span>Move 3</span>
+              <div class="field-autocomplete">
+                <input id="moveNameInput2" class="moveNameInput" data-move-slot="2" type="text" autocomplete="off" placeholder="Leave blank to clear">
+                <div id="moveSuggestionList2" class="species-suggestion-list" data-move-suggestions="2" hidden></div>
+              </div>
+            </label>
+            <label class="field move-field">
+              <span>Move 4</span>
+              <div class="field-autocomplete">
+                <input id="moveNameInput3" class="moveNameInput" data-move-slot="3" type="text" autocomplete="off" placeholder="Leave blank to clear">
+                <div id="moveSuggestionList3" class="species-suggestion-list" data-move-suggestions="3" hidden></div>
+              </div>
+            </label>
+          </div>
+          <small class="field-help">
+            Existing Pokemon only. Suggestions use the selected Pokemon's legal moves at its current level with your save randomizer and Hardcore rules applied.
+          </small>
+          <div class="editor-actions">
+            <button id="applyMoveButton" type="button" disabled>Apply Moves To Selected Slot</button>
+          </div>
+        </section>
+
         <div class="details-stack">
           <section class="detail-card">
             <h3>Current Slot Detail</h3>
@@ -101,6 +141,13 @@
             <h3>Generated Replacement</h3>
             <div id="replacementPreview" class="detail-body muted">
               Type a Pokemon name to preview the generated entry.
+            </div>
+          </section>
+
+          <section class="detail-card">
+            <h3>Edited Move Preview</h3>
+            <div id="replacementMovePreview" class="detail-body muted">
+              Select an existing Pokemon slot to edit its moves.
             </div>
           </section>
         </div>

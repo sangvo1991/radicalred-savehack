@@ -1,4 +1,4 @@
-import { buildPokemonBlueprint, estimateLevelFromExperience } from './pokemonLogic.js';
+import { buildPokemonBlueprint, estimateLevelFromExperience, isHardcoreMoveLegal } from './pokemonLogic.js';
 
 const NAME_OFFSET = 0x000;
 const TRAINED_ID_OFFSET = 0x00A;
@@ -833,6 +833,135 @@ function buildBoxEntry(speciesId, boxNumber, slotIndex, state, coreData) {
   return entryBytes;
 }
 
+// Applies the active save's learnset randomizer to one move id before move-edit validation.
+function resolveEditableMoveId(state, coreData, mon, rawMoveId) {
+  if (!rawMoveId) {
+    return 0;
+  }
+
+  if (!state.metadata?.random?.learnset) {
+    return rawMoveId;
+  }
+
+  return coreData.abilityRandomizer.tryRandomizeMove(
+    state.metadata.trainedId,
+    Boolean(state.metadata.restricted),
+    rawMoveId,
+    mon.ID
+  );
+}
+
+// Adds one legal move candidate to the selected Pokemon's editable move pool.
+function pushEditableMoveOption(pool, byId, state, coreData, mon, rawMoveId, sourceLabel, level = null) {
+  const resolvedMoveId = resolveEditableMoveId(state, coreData, mon, rawMoveId);
+  if (!resolvedMoveId || !coreData.moves?.[resolvedMoveId]) {
+    return;
+  }
+
+  if (state.metadata?.hardmode && !isHardcoreMoveLegal(mon, resolvedMoveId, coreData)) {
+    return;
+  }
+
+  if (byId.has(resolvedMoveId)) {
+    const existing = byId.get(resolvedMoveId);
+    if (existing.level === null && level !== null) {
+      existing.level = level;
+      existing.source = sourceLabel;
+    } else if (existing.level !== null && level !== null) {
+      existing.level = Math.min(existing.level, level);
+    }
+    return;
+  }
+
+  const move = coreData.moves[resolvedMoveId];
+  const detail = {
+    id: move.ID,
+    name: move.name,
+    pp: move.pp || 0,
+    source: sourceLabel,
+    level
+  };
+  byId.set(resolvedMoveId, detail);
+  pool.push(detail);
+}
+
+// Builds the selected Pokemon's full legal move pool for save-aware move editing.
+function buildEditableMovePoolForSlot(slot, state, coreData) {
+  const mon = coreData.species?.[slot.speciesId];
+  if (!mon) {
+    return [];
+  }
+
+  const pool = [];
+  const byId = new Map();
+
+  for (const [rawMoveId, moveLevel] of mon.levelupMoves || []) {
+    if (moveLevel > slot.level) {
+      continue;
+    }
+    pushEditableMoveOption(pool, byId, state, coreData, mon, rawMoveId, 'Level Up', moveLevel);
+  }
+
+  for (const tmIndex of mon.tmMoves || []) {
+    pushEditableMoveOption(pool, byId, state, coreData, mon, coreData.tmMoves?.[tmIndex], 'TM/HM');
+  }
+
+  for (const tutorIndex of mon.tutorMoves || []) {
+    pushEditableMoveOption(pool, byId, state, coreData, mon, coreData.tutorMoves?.[tutorIndex], 'Tutor');
+  }
+
+  for (const moveId of mon.eggMoves || []) {
+    pushEditableMoveOption(pool, byId, state, coreData, mon, moveId, 'Egg');
+  }
+
+  for (const moveId of mon.eventMoves || []) {
+    pushEditableMoveOption(pool, byId, state, coreData, mon, moveId, 'Event');
+  }
+
+  for (const moveId of mon.prevoMoves || []) {
+    pushEditableMoveOption(pool, byId, state, coreData, mon, moveId, 'Pre-Evolution');
+  }
+
+  return pool;
+}
+
+// Normalizes the edited move list into four-or-fewer stored move ids.
+function normalizeEditedMoveIds(moveIds) {
+  return (moveIds || [])
+    .map(moveId => Number(moveId) || 0)
+    .filter(moveId => moveId > 0)
+    .slice(0, 4);
+}
+
+// Validates one edited move list against the selected Pokemon's legal move pool.
+function validateEditedMoveIds(slot, moveIds, state, coreData) {
+  if (!slot?.present) {
+    throw new Error('Only existing Pokemon can have their moves edited.');
+  }
+
+  const mon = coreData.species?.[slot.speciesId];
+  if (!mon) {
+    throw new Error(`Unknown species id ${slot.speciesId}.`);
+  }
+
+  const normalizedMoveIds = normalizeEditedMoveIds(moveIds);
+  if (new Set(normalizedMoveIds).size !== normalizedMoveIds.length) {
+    throw new Error('Duplicate moves are not allowed in the edited moveset.');
+  }
+
+  const legalMoveIds = new Set(
+    buildEditableMovePoolForSlot(slot, state, coreData).map(move => move.id)
+  );
+
+  for (const moveId of normalizedMoveIds) {
+    if (!legalMoveIds.has(moveId)) {
+      throw new Error(`${coreData.moves?.[moveId]?.name || `Move ${moveId}`} is not legal for this Pokemon at its current save settings.`);
+    }
+  }
+
+  return normalizedMoveIds;
+}
+
 // Applies one item-box change to the save's PC item storage and refreshes derived state.
 export function applyPcItemChange(state, slotIndex, itemId, quantity, coreData) {
   if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= PC_ITEM_COUNT) {
@@ -845,6 +974,36 @@ export function applyPcItemChange(state, slotIndex, itemId, quantity, coreData) 
 
   writeUint16LE(state.saveBlock1, entryOffset, safeItemId > 0 ? safeItemId : 0);
   writeUint16LE(state.saveBlock1, entryOffset + 2, safeItemId > 0 ? safeQuantity : 0);
+  hydrateSaveState(state, coreData);
+}
+
+// Applies one edited move list to a selected party slot and refreshes derived state.
+export function applyPartyMoveChange(state, slotIndex, moveIds, coreData) {
+  const slot = state.partySlots?.[slotIndex];
+  const appliedMoveIds = validateEditedMoveIds(slot, moveIds, state, coreData);
+  const entryOffset = PARTY_POKEMON_SAVE_BLOCK1_OFFSET + slotIndex * PARTY_POKEMON_SIZE;
+  const entryBytes = state.saveBlock1.subarray(entryOffset, entryOffset + PARTY_POKEMON_SIZE);
+
+  entryBytes.subarray(PARTY_POKEMON_MOVES_OFFSET, PARTY_POKEMON_MOVES_OFFSET + 8).fill(0);
+  entryBytes.subarray(PARTY_POKEMON_PP_OFFSET, PARTY_POKEMON_PP_OFFSET + 4).fill(0);
+  appliedMoveIds.forEach((moveId, moveIndex) => {
+    writeUint16LE(entryBytes, PARTY_POKEMON_MOVES_OFFSET + moveIndex * 2, moveId);
+    entryBytes[PARTY_POKEMON_PP_OFFSET + moveIndex] = coreData.moves?.[moveId]?.pp || 0;
+  });
+
+  hydrateSaveState(state, coreData);
+}
+
+// Applies one edited move list to a selected box slot and refreshes derived state.
+export function applyBoxMoveChange(state, boxNumber, slotIndex, moveIds, coreData) {
+  const slot = state.boxes?.[boxNumber - 1]?.slots?.[slotIndex];
+  const appliedMoveIds = validateEditedMoveIds(slot, moveIds, state, coreData);
+  const { storageKey, entryOffset } = getBoxSlotLocation(boxNumber, slotIndex);
+  const buffer = getStateBuffer(state, storageKey);
+  const entryBytes = buffer.subarray(entryOffset, entryOffset + BOX_POKEMON_SIZE);
+
+  entryBytes[BOX_POKEMON_PP_BONUSES_OFFSET] = 0;
+  entryBytes.set(packBoxMoveIds(appliedMoveIds), BOX_POKEMON_MOVES_OFFSET);
   hydrateSaveState(state, coreData);
 }
 

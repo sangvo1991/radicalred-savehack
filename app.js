@@ -3,12 +3,15 @@ import {
   lookupItemByName,
   lookupSpeciesByName,
   normalizeItemLookupKey,
+  normalizeMoveLookupKey,
   normalizeSpeciesLookupKey
 } from './coreData.js';
-import { buildPokemonBlueprint } from './pokemonLogic.js';
+import { buildPokemonBlueprint, isHardcoreMoveLegal } from './pokemonLogic.js';
 import {
+  applyBoxMoveChange,
   applyPcItemChange,
   applyBoxSpeciesChange,
+  applyPartyMoveChange,
   applyPartySpeciesChange,
   buildOutputFileName,
   exportEditedSave,
@@ -36,6 +39,8 @@ const elements = {
   selectedCurrentPokemon: document.getElementById('selectedCurrentPokemon'),
   currentSlotDetail: document.getElementById('currentSlotDetail'),
   replacementPreview: document.getElementById('replacementPreview'),
+  replacementMovePreview: document.getElementById('replacementMovePreview'),
+  applyMoveButton: document.getElementById('applyMoveButton'),
   itemCountBadge: document.getElementById('itemCountBadge'),
   itemGrid: document.getElementById('itemGrid'),
   selectedItemTargetLabel: document.getElementById('selectedItemTargetLabel'),
@@ -45,7 +50,9 @@ const elements = {
   itemQuantityInput: document.getElementById('itemQuantityInput'),
   applyItemButton: document.getElementById('applyItemButton'),
   currentItemDetail: document.getElementById('currentItemDetail'),
-  replacementItemPreview: document.getElementById('replacementItemPreview')
+  replacementItemPreview: document.getElementById('replacementItemPreview'),
+  moveNameInputs: Array.from(document.querySelectorAll('.moveNameInput')),
+  moveSuggestionLists: Array.from(document.querySelectorAll('[data-move-suggestions]'))
 };
 
 let coreData = null;
@@ -59,10 +66,16 @@ let speciesSuggestionHideTimer = null;
 let visibleItemSuggestions = [];
 let activeItemSuggestionIndex = -1;
 let itemSuggestionHideTimer = null;
+let visibleMoveSuggestions = [];
+let activeMoveSuggestionIndex = -1;
+let activeMoveSuggestionFieldIndex = -1;
+let moveSuggestionHideTimer = null;
 const BOX_CAPACITY = 30;
 const ITEM_SLOT_COUNT = 30;
+const MOVE_SLOT_COUNT = 4;
 const MAX_SPECIES_SUGGESTIONS = 5;
 const MAX_ITEM_SUGGESTIONS = 5;
+const MAX_MOVE_SUGGESTIONS = 5;
 const PERSISTED_SAVE_STORAGE_KEY = 'rr-save-hack.persisted-save';
 
 // Updates the shared status banner so file-load and export steps stay obvious.
@@ -564,6 +577,342 @@ function scheduleItemSuggestionHide() {
   }, 120);
 }
 
+// Applies the active save's learnset randomizer to one move id for the selected species.
+function resolveEditableMoveId(mon, rawMoveId) {
+  if (!rawMoveId) {
+    return 0;
+  }
+
+  if (!workingSave?.metadata?.random?.learnset) {
+    return rawMoveId;
+  }
+
+  return coreData.abilityRandomizer.tryRandomizeMove(
+    workingSave.metadata.trainedId,
+    Boolean(workingSave.metadata.restricted),
+    rawMoveId,
+    mon.ID
+  );
+}
+
+// Adds one legal move candidate to the selected-slot move pool after save-specific remapping.
+function pushEditableMoveOption(pool, byId, mon, rawMoveId, sourceLabel, level = null) {
+  const resolvedMoveId = resolveEditableMoveId(mon, rawMoveId);
+  if (!resolvedMoveId || !coreData.moves?.[resolvedMoveId]) {
+    return;
+  }
+
+  if (workingSave?.metadata?.hardmode && !isHardcoreMoveLegal(mon, resolvedMoveId, coreData)) {
+    return;
+  }
+
+  if (byId.has(resolvedMoveId)) {
+    const existing = byId.get(resolvedMoveId);
+    if (existing.level === null && level !== null) {
+      existing.level = level;
+      existing.source = sourceLabel;
+    } else if (existing.level !== null && level !== null) {
+      existing.level = Math.min(existing.level, level);
+    }
+    return;
+  }
+
+  const move = coreData.moves[resolvedMoveId];
+  const detail = {
+    id: move.ID,
+    name: move.name,
+    pp: move.pp || 0,
+    source: sourceLabel,
+    level,
+    normalizedLabel: normalizeMoveLookupKey(move.name)
+  };
+  byId.set(resolvedMoveId, detail);
+  pool.push(detail);
+}
+
+// Returns whether the selected slot currently holds a real Pokemon whose moves can be edited.
+function isMoveEditableSlot(slot = getSelectedSlot()) {
+  return Boolean(workingSave && slot?.present);
+}
+
+// Builds the legal move pool for the selected slot using its current species, level, and save rules.
+function buildSelectedSlotMovePool() {
+  const slot = getSelectedSlot();
+  if (!isMoveEditableSlot(slot)) {
+    return [];
+  }
+
+  const mon = coreData?.species?.[slot.speciesId];
+  if (!mon) {
+    return [];
+  }
+
+  const pool = [];
+  const byId = new Map();
+
+  for (const [rawMoveId, moveLevel] of mon.levelupMoves || []) {
+    if (moveLevel > slot.level) {
+      continue;
+    }
+    pushEditableMoveOption(pool, byId, mon, rawMoveId, 'Level Up', moveLevel);
+  }
+
+  for (const tmIndex of mon.tmMoves || []) {
+    pushEditableMoveOption(pool, byId, mon, coreData.tmMoves?.[tmIndex], 'TM/HM');
+  }
+
+  for (const tutorIndex of mon.tutorMoves || []) {
+    pushEditableMoveOption(pool, byId, mon, coreData.tutorMoves?.[tutorIndex], 'Tutor');
+  }
+
+  for (const moveId of mon.eggMoves || []) {
+    pushEditableMoveOption(pool, byId, mon, moveId, 'Egg');
+  }
+
+  for (const moveId of mon.eventMoves || []) {
+    pushEditableMoveOption(pool, byId, mon, moveId, 'Event');
+  }
+
+  for (const moveId of mon.prevoMoves || []) {
+    pushEditableMoveOption(pool, byId, mon, moveId, 'Pre-Evolution');
+  }
+
+  return pool;
+}
+
+// Summarizes the current move-editor input state so previews and apply validation stay in sync.
+function buildEditedMoveSelectionState() {
+  const slot = getSelectedSlot();
+  const movePool = buildSelectedSlotMovePool();
+  const moveLookup = new Map(movePool.map(move => [move.normalizedLabel, move]));
+  const enteredMoveIds = [];
+  const enteredMoves = [];
+  const errors = [];
+  const seenMoveIds = new Set();
+
+  elements.moveNameInputs.forEach((input, fieldIndex) => {
+    const value = input.value.trim();
+    if (!value) {
+      return;
+    }
+
+    const move = moveLookup.get(normalizeMoveLookupKey(value));
+    if (!move) {
+      errors.push(`Move ${fieldIndex + 1} is not legal for the selected Pokemon right now.`);
+      return;
+    }
+
+    if (seenMoveIds.has(move.id)) {
+      errors.push(`Move ${fieldIndex + 1} duplicates another selected move.`);
+      return;
+    }
+
+    seenMoveIds.add(move.id);
+    enteredMoveIds.push(move.id);
+    enteredMoves.push(move);
+  });
+
+  return {
+    slot,
+    movePool,
+    moveLookup,
+    enteredMoveIds,
+    enteredMoves,
+    errors
+  };
+}
+
+// Clears the move editor inputs when switching targets or when no editable Pokemon is selected.
+function hydrateMoveEditorFromSelectedSlot() {
+  const slot = getSelectedSlot();
+  const moveNames = slot?.present
+    ? slot.moveIds.map(moveId => coreData?.moves?.[moveId]?.name || `Move ${moveId}`)
+    : [];
+
+  elements.moveNameInputs.forEach((input, fieldIndex) => {
+    input.value = moveNames[fieldIndex] || '';
+  });
+  hideMoveSuggestions();
+}
+
+// Scores one legal move suggestion against the active text query.
+function scoreMoveSuggestionMatch(suggestion, normalizedQuery) {
+  if (!normalizedQuery) {
+    return null;
+  }
+
+  if (suggestion.normalizedLabel === normalizedQuery) {
+    return 0;
+  }
+  if (suggestion.normalizedLabel.startsWith(normalizedQuery)) {
+    return 1;
+  }
+  if (suggestion.normalizedLabel.includes(normalizedQuery)) {
+    return 2;
+  }
+
+  return null;
+}
+
+// Builds at most five ranked legal move suggestions for one active move editor field.
+function buildMoveSuggestionMatches(query) {
+  const normalizedQuery = normalizeMoveLookupKey(query);
+  if (!normalizedQuery) {
+    return [];
+  }
+
+  return buildSelectedSlotMovePool()
+    .map(suggestion => ({
+      suggestion,
+      score: scoreMoveSuggestionMatch(suggestion, normalizedQuery)
+    }))
+    .filter(entry => entry.score !== null)
+    .sort((left, right) =>
+      left.score - right.score
+      || left.suggestion.name.localeCompare(right.suggestion.name)
+      || left.suggestion.id - right.suggestion.id
+    )
+    .slice(0, MAX_MOVE_SUGGESTIONS)
+    .map(entry => entry.suggestion);
+}
+
+// Cancels any pending delayed hide so the active move autocomplete can stay open while hovering.
+function clearMoveSuggestionHideTimer() {
+  if (moveSuggestionHideTimer) {
+    clearTimeout(moveSuggestionHideTimer);
+    moveSuggestionHideTimer = null;
+  }
+}
+
+// Hides every move suggestion popup and clears the active keyboard-selection state.
+function hideMoveSuggestions() {
+  clearMoveSuggestionHideTimer();
+  visibleMoveSuggestions = [];
+  activeMoveSuggestionIndex = -1;
+  activeMoveSuggestionFieldIndex = -1;
+  elements.moveSuggestionLists.forEach(list => {
+    list.hidden = true;
+    list.replaceChildren();
+  });
+}
+
+// Applies one legal move suggestion into the active move field and refreshes previews immediately.
+function applyMoveSuggestion(fieldIndex, suggestion) {
+  const input = elements.moveNameInputs[fieldIndex];
+  if (!input || !suggestion) {
+    return;
+  }
+
+  input.value = suggestion.name;
+  hideMoveSuggestions();
+  renderReplacementMovePreview();
+  syncControls();
+  input.focus();
+  const cursor = input.value.length;
+  input.setSelectionRange(cursor, cursor);
+}
+
+// Moves the active keyboard selection through the visible move suggestion popup.
+function moveActiveMoveSuggestion(delta) {
+  if (!visibleMoveSuggestions.length || activeMoveSuggestionFieldIndex < 0) {
+    return;
+  }
+
+  if (activeMoveSuggestionIndex < 0) {
+    activeMoveSuggestionIndex = delta > 0 ? 0 : visibleMoveSuggestions.length - 1;
+  } else {
+    activeMoveSuggestionIndex = (activeMoveSuggestionIndex + delta + visibleMoveSuggestions.length) % visibleMoveSuggestions.length;
+  }
+
+  renderMoveSuggestions(activeMoveSuggestionFieldIndex, elements.moveNameInputs[activeMoveSuggestionFieldIndex].value, true);
+}
+
+// Updates the highlighted move suggestion row after keyboard or pointer navigation.
+function updateActiveMoveSuggestionRow() {
+  const list = elements.moveSuggestionLists[activeMoveSuggestionFieldIndex];
+  if (!list) {
+    return;
+  }
+
+  Array.from(list.children).forEach((row, index) => {
+    row.classList.toggle('active', index === activeMoveSuggestionIndex);
+  });
+}
+
+// Rebuilds one move suggestion popup for the currently focused move input field.
+function renderMoveSuggestions(fieldIndex, query, preserveActiveIndex = false) {
+  const input = elements.moveNameInputs[fieldIndex];
+  const list = elements.moveSuggestionLists[fieldIndex];
+  const matches = buildMoveSuggestionMatches(query);
+  visibleMoveSuggestions = matches;
+  activeMoveSuggestionFieldIndex = fieldIndex;
+
+  elements.moveSuggestionLists.forEach((otherList, otherIndex) => {
+    if (otherIndex !== fieldIndex) {
+      otherList.hidden = true;
+      otherList.replaceChildren();
+    }
+  });
+
+  if (!matches.length || document.activeElement !== input) {
+    list.hidden = true;
+    list.replaceChildren();
+    visibleMoveSuggestions = [];
+    activeMoveSuggestionIndex = -1;
+    if (document.activeElement !== input) {
+      activeMoveSuggestionFieldIndex = -1;
+    }
+    return;
+  }
+
+  if (!preserveActiveIndex || activeMoveSuggestionIndex >= matches.length) {
+    activeMoveSuggestionIndex = -1;
+  }
+
+  const rows = matches.map((suggestion, index) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'species-suggestion';
+    if (index === activeMoveSuggestionIndex) {
+      button.classList.add('active');
+    }
+
+    const label = document.createElement('span');
+    label.textContent = suggestion.name;
+    button.appendChild(label);
+
+    const meta = document.createElement('span');
+    meta.className = 'species-suggestion-meta';
+    meta.textContent = suggestion.level !== null ? `Lv ${suggestion.level}` : suggestion.source;
+    button.appendChild(meta);
+
+    button.addEventListener('mousedown', event => {
+      event.preventDefault();
+      applyMoveSuggestion(fieldIndex, suggestion);
+    });
+    button.addEventListener('mouseenter', () => {
+      activeMoveSuggestionFieldIndex = fieldIndex;
+      activeMoveSuggestionIndex = index;
+      updateActiveMoveSuggestionRow();
+    });
+
+    return button;
+  });
+
+  clearMoveSuggestionHideTimer();
+  list.hidden = false;
+  list.replaceChildren(...rows);
+  updateActiveMoveSuggestionRow();
+}
+
+// Starts the delayed close used when one move input loses focus or hover.
+function scheduleMoveSuggestionHide() {
+  clearMoveSuggestionHideTimer();
+  moveSuggestionHideTimer = window.setTimeout(() => {
+    hideMoveSuggestions();
+  }, 120);
+}
+
 // Returns the active slot object currently selected in the UI.
 function getSelectedSlot() {
   if (!workingSave || !selectedTarget) {
@@ -696,6 +1045,7 @@ function renderPartyGrid() {
     button.replaceChildren(label, name, subtext);
     button.addEventListener('click', () => {
       selectedTarget = { kind: 'party', slotIndex: slot.slotIndex };
+      hydrateMoveEditorFromSelectedSlot();
       persistWorkingSave();
       renderAll();
     });
@@ -780,6 +1130,7 @@ function renderBoxGrid() {
         boxNumber: currentBox.boxNumber,
         slotIndex: slot.slotIndex
       };
+      hydrateMoveEditorFromSelectedSlot();
       persistWorkingSave();
       renderAll();
     });
@@ -931,6 +1282,41 @@ function renderReplacementPreview() {
   elements.replacementPreview.replaceChildren(...lines);
 }
 
+// Builds the edited move preview for the selected existing Pokemon slot.
+function renderReplacementMovePreview() {
+  elements.replacementMovePreview.replaceChildren();
+  const slot = getSelectedSlot();
+
+  if (!workingSave || !selectedTarget) {
+    elements.replacementMovePreview.textContent = 'Select a team or box slot first.';
+    elements.replacementMovePreview.className = 'detail-body muted';
+    return;
+  }
+
+  if (!slot?.present) {
+    elements.replacementMovePreview.textContent = 'Only existing Pokemon can have their moves edited.';
+    elements.replacementMovePreview.className = 'detail-body muted';
+    return;
+  }
+
+  const selection = buildEditedMoveSelectionState();
+  if (selection.errors.length) {
+    elements.replacementMovePreview.textContent = selection.errors[0];
+    elements.replacementMovePreview.className = 'detail-body muted';
+    return;
+  }
+
+  elements.replacementMovePreview.className = 'detail-body';
+  const lines = [
+    createDetailLine('Species', getSpeciesName(slot.speciesId)),
+    createDetailLine('Level', String(slot.level)),
+    createDetailLine('Edited Moves', selection.enteredMoveIds.length ? formatMoveNames(selection.enteredMoveIds) : 'None'),
+    createDetailLine('Legal Move Pool', `${selection.movePool.length} moves`)
+  ];
+
+  elements.replacementMovePreview.replaceChildren(...lines);
+}
+
 // Builds the replacement item preview for the currently typed item name and quantity.
 function renderReplacementItemPreview() {
   elements.replacementItemPreview.replaceChildren();
@@ -977,8 +1363,15 @@ function renderReplacementItemPreview() {
 function syncControls() {
   const selectedSlot = getSelectedSlot();
   const selectedItemSlot = getSelectedItemSlot();
+  const moveSelection = buildEditedMoveSelectionState();
   elements.exportSaveButton.disabled = !workingSave;
   elements.applySpeciesButton.disabled = !(workingSave && selectedTarget && elements.speciesNameInput.value.trim());
+  elements.applyMoveButton.disabled = !Boolean(
+    workingSave
+    && selectedTarget
+    && selectedSlot?.present
+    && moveSelection.errors.length === 0
+  );
   const itemQuantity = parseRequestedItemQuantity();
   const itemMatch = lookupItemByName(coreData, elements.itemNameInput.value);
   const canApplyItem = Boolean(
@@ -1004,6 +1397,7 @@ function renderAll() {
   renderItemGrid();
   renderCurrentSlotDetail();
   renderReplacementPreview();
+  renderReplacementMovePreview();
   renderCurrentItemDetail();
   renderReplacementItemPreview();
   syncControls();
@@ -1024,14 +1418,16 @@ async function handleSaveUpload(event) {
     selectedBoxNumber = 1;
     selectedTarget = { kind: 'party', slotIndex: 0 };
     selectedItemSlotIndex = 0;
+    hydrateMoveEditorFromSelectedSlot();
     hydrateItemEditorFromSelectedSlot();
     renderAll();
     persistWorkingSave();
-    setStatus(`Loaded ${file.name}. Edit team slots, box slots, or PC item slots, then apply or export.`, 'success');
+    setStatus(`Loaded ${file.name}. Edit Pokemon slots, existing moves, or PC item slots, then apply or export.`, 'success');
   } catch (error) {
     workingSave = null;
     selectedTarget = null;
     selectedItemSlotIndex = 0;
+    hydrateMoveEditorFromSelectedSlot();
     hydrateItemEditorFromSelectedSlot();
     renderAll();
     clearPersistedSave();
@@ -1059,11 +1455,47 @@ function handleApplySpecies() {
       selectedBoxNumber = selectedTarget.boxNumber;
     }
 
+    hydrateMoveEditorFromSelectedSlot();
     renderAll();
     persistWorkingSave();
     setStatus(`Applied ${getSpeciesName(mon.ID)} to ${formatTargetLabel(selectedTarget)}.`, 'success');
   } catch (error) {
     setStatus(error.message || 'Unable to apply that Pokemon.', 'error');
+  }
+}
+
+// Applies the edited move list to the currently selected existing Pokemon slot.
+function handleApplyMoves() {
+  if (!workingSave || !selectedTarget) {
+    return;
+  }
+
+  const slot = getSelectedSlot();
+  if (!slot?.present) {
+    setStatus('Select an existing Pokemon before editing moves.', 'error');
+    return;
+  }
+
+  const selection = buildEditedMoveSelectionState();
+  if (selection.errors.length) {
+    setStatus(selection.errors[0], 'error');
+    return;
+  }
+
+  try {
+    if (selectedTarget.kind === 'party') {
+      applyPartyMoveChange(workingSave, selectedTarget.slotIndex, selection.enteredMoveIds, coreData);
+    } else {
+      applyBoxMoveChange(workingSave, selectedTarget.boxNumber, selectedTarget.slotIndex, selection.enteredMoveIds, coreData);
+      selectedBoxNumber = selectedTarget.boxNumber;
+    }
+
+    hydrateMoveEditorFromSelectedSlot();
+    renderAll();
+    persistWorkingSave();
+    setStatus(`Applied ${selection.enteredMoveIds.length ? formatMoveNames(selection.enteredMoveIds) : 'an empty moveset'} to ${formatTargetLabel(selectedTarget)}.`, 'success');
+  } catch (error) {
+    setStatus(error.message || 'Unable to apply those moves.', 'error');
   }
 }
 
@@ -1128,6 +1560,7 @@ async function start() {
     coreData = await loadCoreData();
     renderAll();
     const restored = await restorePersistedSave();
+    hydrateMoveEditorFromSelectedSlot();
     hydrateItemEditorFromSelectedSlot();
     renderAll();
     setStatus(
@@ -1144,6 +1577,7 @@ async function start() {
 
 elements.saveFileInput.addEventListener('change', handleSaveUpload);
 elements.applySpeciesButton.addEventListener('click', handleApplySpecies);
+elements.applyMoveButton.addEventListener('click', handleApplyMoves);
 elements.applyItemButton.addEventListener('click', handleApplyItem);
 elements.exportSaveButton.addEventListener('click', handleExport);
 elements.speciesNameInput.addEventListener('input', () => {
@@ -1182,6 +1616,46 @@ elements.speciesNameInput.addEventListener('keydown', event => {
 });
 elements.speciesSuggestionList.addEventListener('mouseenter', clearSpeciesSuggestionHideTimer);
 elements.speciesSuggestionList.addEventListener('mouseleave', scheduleSpeciesSuggestionHide);
+elements.moveNameInputs.forEach((input, fieldIndex) => {
+  input.addEventListener('input', () => {
+    renderReplacementMovePreview();
+    syncControls();
+    renderMoveSuggestions(fieldIndex, input.value);
+  });
+  input.addEventListener('focus', () => {
+    renderMoveSuggestions(fieldIndex, input.value);
+  });
+  input.addEventListener('blur', () => {
+    scheduleMoveSuggestionHide();
+  });
+  input.addEventListener('keydown', event => {
+    if (event.key === 'ArrowDown' && visibleMoveSuggestions.length && activeMoveSuggestionFieldIndex === fieldIndex) {
+      event.preventDefault();
+      moveActiveMoveSuggestion(1);
+      return;
+    }
+
+    if (event.key === 'ArrowUp' && visibleMoveSuggestions.length && activeMoveSuggestionFieldIndex === fieldIndex) {
+      event.preventDefault();
+      moveActiveMoveSuggestion(-1);
+      return;
+    }
+
+    if (event.key === 'Enter' && activeMoveSuggestionIndex >= 0 && activeMoveSuggestionFieldIndex === fieldIndex) {
+      event.preventDefault();
+      applyMoveSuggestion(fieldIndex, visibleMoveSuggestions[activeMoveSuggestionIndex]);
+      return;
+    }
+
+    if (event.key === 'Escape') {
+      hideMoveSuggestions();
+    }
+  });
+});
+elements.moveSuggestionLists.forEach(list => {
+  list.addEventListener('mouseenter', clearMoveSuggestionHideTimer);
+  list.addEventListener('mouseleave', scheduleMoveSuggestionHide);
+});
 elements.itemNameInput.addEventListener('input', () => {
   renderReplacementItemPreview();
   syncControls();
