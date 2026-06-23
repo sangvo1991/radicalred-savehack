@@ -8,13 +8,13 @@ export function getAbilityDisplayName(coreData, abilityId, nameIndex = 0) {
     return '';
   }
 
-  if (abilityId === 73) {
-    return 'As One (Grim Neigh + Unnerve)';
-  }
+	if (abilityId === 73) {
+		return 'As One (Grim Neigh)';
+	}
 
-  if (abilityId === 77) {
-    return 'As One (Moxie + Unnerve)';
-  }
+	if (abilityId === 77) {
+		return 'As One (Moxie)';
+	}
 
   return coreData.abilities[abilityId].names[nameIndex] || coreData.abilities[abilityId].names[0];
 }

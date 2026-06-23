@@ -35,6 +35,9 @@ const PARTY_COUNT_SAVE_BLOCK1_OFFSET = 0x0034;
 const PARTY_POKEMON_SAVE_BLOCK1_OFFSET = 0x0038;
 const PARTY_POKEMON_SIZE = 100;
 const PARTY_POKEMON_CAPACITY = 6;
+const PC_ITEM_STORAGE_OFFSET = 0x0298;
+const PC_ITEM_COUNT = 30;
+const PC_ITEM_SLOT_SIZE = 4;
 const PARTY_POKEMON_SPECIES_OFFSET = 0x20;
 const PARTY_POKEMON_HELD_ITEM_OFFSET = 0x22;
 const PARTY_POKEMON_EXP_OFFSET = 0x24;
@@ -601,6 +604,22 @@ function parseBoxSlot(state, boxNumber, slotIndex, coreData) {
   };
 }
 
+// Reads one PC item storage slot into a UI-friendly object.
+function parsePcItemSlot(saveBlock1, slotIndex) {
+  const entryOffset = PC_ITEM_STORAGE_OFFSET + slotIndex * PC_ITEM_SLOT_SIZE;
+  const itemId = readUint16LE(saveBlock1, entryOffset);
+  const quantity = readUint16LE(saveBlock1, entryOffset + 2);
+
+  return {
+    slotIndex,
+    slotNumber: slotIndex + 1,
+    entryOffset,
+    itemId,
+    quantity,
+    present: itemId > 0 && quantity > 0
+  };
+}
+
 // Rebuilds every team slot and PC box slot from the current working save buffers.
 function hydrateSaveState(state, coreData) {
   const rawPartyCount = state.saveBlock1[PARTY_COUNT_SAVE_BLOCK1_OFFSET] || 0;
@@ -613,6 +632,10 @@ function hydrateSaveState(state, coreData) {
     boxNumber: boxIndex + 1,
     slots: []
   }));
+  state.pcItems = Array.from(
+    { length: PC_ITEM_COUNT },
+    (_, slotIndex) => parsePcItemSlot(state.saveBlock1, slotIndex)
+  );
 
   for (let boxNumber = 1; boxNumber <= BOX_COUNT; boxNumber += 1) {
     const box = state.boxes[boxNumber - 1];
@@ -808,6 +831,21 @@ function buildBoxEntry(speciesId, boxNumber, slotIndex, state, coreData) {
   writeUint32LE(entryBytes, BOX_POKEMON_IVS_OFFSET, ALL_31_IVS_BITFIELD);
 
   return entryBytes;
+}
+
+// Applies one item-box change to the save's PC item storage and refreshes derived state.
+export function applyPcItemChange(state, slotIndex, itemId, quantity, coreData) {
+  if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= PC_ITEM_COUNT) {
+    throw new Error(`Unsupported PC item slot ${slotIndex}.`);
+  }
+
+  const safeQuantity = Math.min(999, Math.max(0, Number(quantity) || 0));
+  const safeItemId = safeQuantity > 0 ? (Number.isInteger(itemId) ? itemId : Number(itemId) || 0) : 0;
+  const entryOffset = PC_ITEM_STORAGE_OFFSET + slotIndex * PC_ITEM_SLOT_SIZE;
+
+  writeUint16LE(state.saveBlock1, entryOffset, safeItemId > 0 ? safeItemId : 0);
+  writeUint16LE(state.saveBlock1, entryOffset + 2, safeItemId > 0 ? safeQuantity : 0);
+  hydrateSaveState(state, coreData);
 }
 
 // Applies one species replacement to a selected party slot and refreshes derived state.

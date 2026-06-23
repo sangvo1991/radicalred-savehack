@@ -15,10 +15,23 @@ export function normalizeSpeciesLookupKey(value) {
     .replace(/[^a-z0-9]+/g, '');
 }
 
+// Normalizes item names so the editor can accept punctuation-insensitive input.
+export function normalizeItemLookupKey(value) {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '');
+}
+
 // Returns the best matching species for the provided user input.
 export function lookupSpeciesByName(coreData, input) {
   const key = normalizeSpeciesLookupKey(input);
   return key ? coreData.speciesNameLookup.get(key) || null : null;
+}
+
+// Returns the best matching item for the provided user input.
+export function lookupItemByName(coreData, input) {
+  const key = normalizeItemLookupKey(input);
+  return key ? coreData.itemNameLookup.get(key) || null : null;
 }
 
 // Fetches plain text so repo source files can be evaluated locally in the browser.
@@ -163,6 +176,42 @@ function buildSpeciesLookup(speciesMap, typesMap) {
   return { speciesList, speciesNameLookup, speciesDisplayNames, speciesSuggestions };
 }
 
+// Indexes item names so the editor can resolve and suggest PC box items quickly.
+function buildItemLookup(itemsMap) {
+  const itemList = Object.values(itemsMap).sort((left, right) =>
+    left.name.localeCompare(right.name) || left.ID - right.ID
+  );
+  const itemNameLookup = new Map();
+  const itemDisplayNames = new Map();
+  const itemSuggestions = [];
+
+  for (const item of itemList) {
+    itemDisplayNames.set(item.ID, item.name);
+    const aliases = [
+      item.name,
+      item.name.replace(/-/g, ' '),
+      item.name.replace(/\s+/g, '')
+    ];
+
+    for (const alias of aliases) {
+      const normalized = normalizeItemLookupKey(alias);
+      if (normalized && !itemNameLookup.has(normalized)) {
+        itemNameLookup.set(normalized, item);
+      }
+    }
+
+    itemSuggestions.push({
+      itemId: item.ID,
+      label: item.name,
+      value: item.name,
+      description: item.description || '',
+      normalizedLabel: normalizeItemLookupKey(item.name)
+    });
+  }
+
+  return { itemList, itemNameLookup, itemDisplayNames, itemSuggestions };
+}
+
 // Loads repo data and the few constants/functions the standalone editor needs.
 export async function loadCoreData() {
   if (!cachedCoreDataPromise) {
@@ -198,6 +247,12 @@ export async function loadCoreData() {
         speciesDisplayNames,
         speciesSuggestions
       } = buildSpeciesLookup(data.species, data.types);
+      const {
+        itemList,
+        itemNameLookup,
+        itemDisplayNames,
+        itemSuggestions
+      } = buildItemLookup(data.items);
 
       return {
         ...data,
@@ -205,6 +260,10 @@ export async function loadCoreData() {
         speciesNameLookup,
         speciesDisplayNames,
         speciesSuggestions,
+        itemList,
+        itemNameLookup,
+        itemDisplayNames,
+        itemSuggestions,
         abilityRandomizer,
         advancedSearch,
         randomizerMetadata,
