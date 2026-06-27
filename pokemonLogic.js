@@ -1,6 +1,7 @@
 import { DEFAULT_GROWTH_RATE_ID, GROWTH_RATE_BY_DEX_ID } from './growthRates.js';
 
 const hardcoreStateCache = new WeakMap();
+const preEvolutionLookupCache = new WeakMap();
 
 // Returns the display name used elsewhere in the repo, including As One special cases.
 export function getAbilityDisplayName(coreData, abilityId, nameIndex = 0) {
@@ -88,6 +89,47 @@ function isHardcoreEnabled(saveMetadata) {
   return Boolean(saveMetadata?.hardmode);
 }
 
+// Builds a child-to-parent lookup once so inherited move checks stay fast in the editor.
+function getPreEvolutionLookup(coreData) {
+  if (preEvolutionLookupCache.has(coreData)) {
+    return preEvolutionLookupCache.get(coreData);
+  }
+
+  const lookup = new Map();
+  for (const mon of Object.values(coreData.species || {})) {
+    for (const evolution of mon.evolutions || []) {
+      const childSpeciesId = evolution?.[2];
+      if (childSpeciesId && !lookup.has(childSpeciesId)) {
+        lookup.set(childSpeciesId, mon.ID);
+      }
+    }
+  }
+
+  preEvolutionLookupCache.set(coreData, lookup);
+  return lookup;
+}
+
+// Walks backward through the full evolution line so parent-stage level-up moves can be inherited.
+function getPreEvolutionLine(mon, coreData) {
+  const lookup = getPreEvolutionLookup(coreData);
+  const line = [];
+  const seenSpeciesIds = new Set([mon.ID]);
+  let parentSpeciesId = lookup.get(mon.ID);
+
+  while (parentSpeciesId && !seenSpeciesIds.has(parentSpeciesId)) {
+    const parent = coreData.species?.[parentSpeciesId];
+    if (!parent) {
+      break;
+    }
+
+    line.push(parent);
+    seenSpeciesIds.add(parentSpeciesId);
+    parentSpeciesId = lookup.get(parentSpeciesId);
+  }
+
+  return line;
+}
+
 // Applies the active save's randomized learnset table to one move id.
 function resolveMoveId(moveId, mon, saveMetadata, coreData) {
   if (!saveMetadata?.random?.learnset) {
@@ -136,8 +178,9 @@ function pushEditableMoveOption(pool, byId, mon, saveMetadata, coreData, rawMove
     if (existing.level === null && level !== null) {
       existing.level = level;
       existing.source = sourceLabel;
-    } else if (existing.level !== null && level !== null) {
-      existing.level = Math.min(existing.level, level);
+    } else if (existing.level !== null && level !== null && level < existing.level) {
+      existing.level = level;
+      existing.source = sourceLabel;
     }
     return;
   }
@@ -164,6 +207,15 @@ export function buildEditableMovePool(mon, saveMetadata, coreData, level = 100) 
       continue;
     }
     pushEditableMoveOption(pool, byId, mon, saveMetadata, coreData, rawMoveId, 'Level Up', moveLevel);
+  }
+
+  for (const parent of getPreEvolutionLine(mon, coreData)) {
+    for (const [rawMoveId, moveLevel] of parent.levelupMoves || []) {
+      if (moveLevel > level) {
+        continue;
+      }
+      pushEditableMoveOption(pool, byId, mon, saveMetadata, coreData, rawMoveId, 'Pre-Evolution', moveLevel);
+    }
   }
 
   for (const tmIndex of mon.tmMoves || []) {

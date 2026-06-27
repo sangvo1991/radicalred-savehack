@@ -7,8 +7,8 @@ import {
   normalizeSpeciesLookupKey
 } from './coreData.js';
 import {
+  buildEditableMovePool,
   buildPokemonBlueprint,
-  isHardcoreMoveLegal,
   resolveAbilityPool
 } from './pokemonLogic.js';
 import {
@@ -599,59 +599,6 @@ function scheduleItemSuggestionHide() {
   }, 120);
 }
 
-// Applies the active save's learnset randomizer to one move id for the selected species.
-function resolveEditableMoveId(mon, rawMoveId) {
-  if (!rawMoveId) {
-    return 0;
-  }
-
-  if (!workingSave?.metadata?.random?.learnset) {
-    return rawMoveId;
-  }
-
-  return coreData.abilityRandomizer.tryRandomizeMove(
-    workingSave.metadata.trainedId,
-    Boolean(workingSave.metadata.restricted),
-    rawMoveId,
-    mon.ID
-  );
-}
-
-// Adds one legal move candidate to the selected-slot move pool after save-specific remapping.
-function pushEditableMoveOption(pool, byId, mon, rawMoveId, sourceLabel, level = null) {
-  const resolvedMoveId = resolveEditableMoveId(mon, rawMoveId);
-  if (!resolvedMoveId || !coreData.moves?.[resolvedMoveId]) {
-    return;
-  }
-
-  if (workingSave?.metadata?.hardmode && !isHardcoreMoveLegal(mon, resolvedMoveId, coreData)) {
-    return;
-  }
-
-  if (byId.has(resolvedMoveId)) {
-    const existing = byId.get(resolvedMoveId);
-    if (existing.level === null && level !== null) {
-      existing.level = level;
-      existing.source = sourceLabel;
-    } else if (existing.level !== null && level !== null) {
-      existing.level = Math.min(existing.level, level);
-    }
-    return;
-  }
-
-  const move = coreData.moves[resolvedMoveId];
-  const detail = {
-    id: move.ID,
-    name: move.name,
-    pp: move.pp || 0,
-    source: sourceLabel,
-    level,
-    normalizedLabel: normalizeMoveLookupKey(move.name)
-  };
-  byId.set(resolvedMoveId, detail);
-  pool.push(detail);
-}
-
 // Returns whether the selected slot currently holds a real Pokemon whose moves can be edited.
 function isMoveEditableSlot(slot = getSelectedSlot()) {
   return Boolean(workingSave && slot?.present);
@@ -669,37 +616,10 @@ function buildSelectedSlotMovePool() {
     return [];
   }
 
-  const pool = [];
-  const byId = new Map();
-
-  for (const [rawMoveId, moveLevel] of mon.levelupMoves || []) {
-    if (moveLevel > slot.level) {
-      continue;
-    }
-    pushEditableMoveOption(pool, byId, mon, rawMoveId, 'Level Up', moveLevel);
-  }
-
-  for (const tmIndex of mon.tmMoves || []) {
-    pushEditableMoveOption(pool, byId, mon, coreData.tmMoves?.[tmIndex], 'TM/HM');
-  }
-
-  for (const tutorIndex of mon.tutorMoves || []) {
-    pushEditableMoveOption(pool, byId, mon, coreData.tutorMoves?.[tutorIndex], 'Tutor');
-  }
-
-  for (const moveId of mon.eggMoves || []) {
-    pushEditableMoveOption(pool, byId, mon, moveId, 'Egg');
-  }
-
-  for (const moveId of mon.eventMoves || []) {
-    pushEditableMoveOption(pool, byId, mon, moveId, 'Event');
-  }
-
-  for (const moveId of mon.prevoMoves || []) {
-    pushEditableMoveOption(pool, byId, mon, moveId, 'Pre-Evolution');
-  }
-
-  return pool;
+  return buildEditableMovePool(mon, workingSave.metadata, coreData, slot.level).map(move => ({
+    ...move,
+    normalizedLabel: normalizeMoveLookupKey(move.name)
+  }));
 }
 
 // Summarizes the current move-editor input state so previews and apply validation stay in sync.
