@@ -13,9 +13,11 @@ import {
 } from './pokemonLogic.js';
 import {
   applyBoxMoveChange,
+  applyBoxHeldItemChange,
   applyPcItemChange,
   applyBoxSpeciesChange,
   applyPartyMoveChange,
+  applyPartyHeldItemChange,
   applyPartySpeciesChange,
   buildOutputFileName,
   exportEditedSave,
@@ -42,8 +44,12 @@ const elements = {
   boxGrid: document.getElementById('boxGrid'),
   selectedTargetLabel: document.getElementById('selectedTargetLabel'),
   selectedCurrentPokemon: document.getElementById('selectedCurrentPokemon'),
+  pokemonItemNameInput: document.getElementById('pokemonItemNameInput'),
+  pokemonItemSuggestionList: document.getElementById('pokemonItemSuggestionList'),
+  applyPokemonItemButton: document.getElementById('applyPokemonItemButton'),
   currentSlotDetail: document.getElementById('currentSlotDetail'),
   replacementPreview: document.getElementById('replacementPreview'),
+  pokemonItemPreview: document.getElementById('pokemonItemPreview'),
   replacementMovePreview: document.getElementById('replacementMovePreview'),
   applyMoveButton: document.getElementById('applyMoveButton'),
   itemCountBadge: document.getElementById('itemCountBadge'),
@@ -68,9 +74,18 @@ let selectedItemSlotIndex = 0;
 let visibleSpeciesSuggestions = [];
 let activeSpeciesSuggestionIndex = -1;
 let speciesSuggestionHideTimer = null;
-let visibleItemSuggestions = [];
-let activeItemSuggestionIndex = -1;
-let itemSuggestionHideTimer = null;
+const itemSuggestionEditors = {
+  pc: {
+    visibleSuggestions: [],
+    activeSuggestionIndex: -1,
+    hideTimer: null
+  },
+  pokemon: {
+    visibleSuggestions: [],
+    activeSuggestionIndex: -1,
+    hideTimer: null
+  }
+};
 let visibleMoveSuggestions = [];
 let activeMoveSuggestionIndex = -1;
 let activeMoveSuggestionFieldIndex = -1;
@@ -82,6 +97,24 @@ const MAX_SPECIES_SUGGESTIONS = 5;
 const MAX_ITEM_SUGGESTIONS = 5;
 const MAX_MOVE_SUGGESTIONS = 5;
 const PERSISTED_SAVE_STORAGE_KEY = 'rr-save-hack.persisted-save';
+
+function getItemSuggestionContext(editorKey) {
+  if (editorKey === 'pokemon') {
+    return {
+      state: itemSuggestionEditors.pokemon,
+      input: elements.pokemonItemNameInput,
+      suggestionList: elements.pokemonItemSuggestionList,
+      renderPreview: renderPokemonItemPreview
+    };
+  }
+
+  return {
+    state: itemSuggestionEditors.pc,
+    input: elements.itemNameInput,
+    suggestionList: elements.itemSuggestionList,
+    renderPreview: renderReplacementItemPreview
+  };
+}
 
 // Updates the shared status banner so file-load and export steps stay obvious.
 function setStatus(message, tone = 'info') {
@@ -487,78 +520,84 @@ function buildItemSuggestionMatches(query) {
 }
 
 // Cancels any pending delayed hide so focus changes do not collapse the item popup too early.
-function clearItemSuggestionHideTimer() {
-  if (itemSuggestionHideTimer) {
-    clearTimeout(itemSuggestionHideTimer);
-    itemSuggestionHideTimer = null;
+function clearItemSuggestionHideTimer(editorKey = 'pc') {
+  const { state } = getItemSuggestionContext(editorKey);
+  if (state.hideTimer) {
+    clearTimeout(state.hideTimer);
+    state.hideTimer = null;
   }
 }
 
 // Hides the item popup after clicks and blur transitions settle.
-function hideItemSuggestions() {
-  clearItemSuggestionHideTimer();
-  visibleItemSuggestions = [];
-  activeItemSuggestionIndex = -1;
-  elements.itemSuggestionList.hidden = true;
-  elements.itemSuggestionList.replaceChildren();
+function hideItemSuggestions(editorKey = 'pc') {
+  const { state, suggestionList } = getItemSuggestionContext(editorKey);
+  clearItemSuggestionHideTimer(editorKey);
+  state.visibleSuggestions = [];
+  state.activeSuggestionIndex = -1;
+  suggestionList.hidden = true;
+  suggestionList.replaceChildren();
 }
 
 // Applies one item suggestion into the input while keeping the preview and button state in sync.
-function applyItemSuggestion(suggestion) {
+function applyItemSuggestion(suggestion, editorKey = 'pc') {
   if (!suggestion) {
     return;
   }
 
-  elements.itemNameInput.value = suggestion.value;
-  hideItemSuggestions();
-  renderReplacementItemPreview();
+  const { input, renderPreview } = getItemSuggestionContext(editorKey);
+  input.value = suggestion.value;
+  hideItemSuggestions(editorKey);
+  renderPreview();
   syncControls();
-  elements.itemNameInput.focus();
-  const cursor = elements.itemNameInput.value.length;
-  elements.itemNameInput.setSelectionRange(cursor, cursor);
+  input.focus();
+  const cursor = input.value.length;
+  input.setSelectionRange(cursor, cursor);
 }
 
 // Moves the active keyboard selection through the visible item suggestion popup.
-function moveActiveItemSuggestion(delta) {
-  if (!visibleItemSuggestions.length) {
+function moveActiveItemSuggestion(delta, editorKey = 'pc') {
+  const { state, input } = getItemSuggestionContext(editorKey);
+  if (!state.visibleSuggestions.length) {
     return;
   }
 
-  if (activeItemSuggestionIndex < 0) {
-    activeItemSuggestionIndex = delta > 0 ? 0 : visibleItemSuggestions.length - 1;
+  if (state.activeSuggestionIndex < 0) {
+    state.activeSuggestionIndex = delta > 0 ? 0 : state.visibleSuggestions.length - 1;
   } else {
-    activeItemSuggestionIndex = (activeItemSuggestionIndex + delta + visibleItemSuggestions.length) % visibleItemSuggestions.length;
+    state.activeSuggestionIndex = (state.activeSuggestionIndex + delta + state.visibleSuggestions.length) % state.visibleSuggestions.length;
   }
 
-  renderItemSuggestions(elements.itemNameInput.value, true);
+  renderItemSuggestions(editorKey, input.value, true);
 }
 
 // Syncs the active item row highlight without rebuilding the popup on every pointer move.
-function updateActiveItemSuggestionRow() {
-  Array.from(elements.itemSuggestionList.children).forEach((row, index) => {
-    row.classList.toggle('active', index === activeItemSuggestionIndex);
+function updateActiveItemSuggestionRow(editorKey = 'pc') {
+  const { state, suggestionList } = getItemSuggestionContext(editorKey);
+  Array.from(suggestionList.children).forEach((row, index) => {
+    row.classList.toggle('active', index === state.activeSuggestionIndex);
   });
 }
 
 // Rebuilds the popup rows for the current item query and keeps the active row highlighted.
-function renderItemSuggestions(query, preserveActiveIndex = false) {
+function renderItemSuggestions(editorKey, query, preserveActiveIndex = false) {
+  const { state, input, suggestionList } = getItemSuggestionContext(editorKey);
   const matches = buildItemSuggestionMatches(query);
-  visibleItemSuggestions = matches;
+  state.visibleSuggestions = matches;
 
-  if (!matches.length || document.activeElement !== elements.itemNameInput) {
-    hideItemSuggestions();
+  if (!matches.length || document.activeElement !== input) {
+    hideItemSuggestions(editorKey);
     return;
   }
 
-  if (!preserveActiveIndex || activeItemSuggestionIndex >= matches.length) {
-    activeItemSuggestionIndex = -1;
+  if (!preserveActiveIndex || state.activeSuggestionIndex >= matches.length) {
+    state.activeSuggestionIndex = -1;
   }
 
   const rows = matches.map((suggestion, index) => {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'species-suggestion';
-    if (index === activeItemSuggestionIndex) {
+    if (index === state.activeSuggestionIndex) {
       button.classList.add('active');
     }
 
@@ -575,27 +614,28 @@ function renderItemSuggestions(query, preserveActiveIndex = false) {
 
     button.addEventListener('mousedown', event => {
       event.preventDefault();
-      applyItemSuggestion(suggestion);
+      applyItemSuggestion(suggestion, editorKey);
     });
     button.addEventListener('mouseenter', () => {
-      activeItemSuggestionIndex = index;
-      updateActiveItemSuggestionRow();
+      state.activeSuggestionIndex = index;
+      updateActiveItemSuggestionRow(editorKey);
     });
 
     return button;
   });
 
-  clearItemSuggestionHideTimer();
-  elements.itemSuggestionList.hidden = false;
-  elements.itemSuggestionList.replaceChildren(...rows);
-  updateActiveItemSuggestionRow();
+  clearItemSuggestionHideTimer(editorKey);
+  suggestionList.hidden = false;
+  suggestionList.replaceChildren(...rows);
+  updateActiveItemSuggestionRow(editorKey);
 }
 
 // Starts the delayed close used when the item field loses focus or hover.
-function scheduleItemSuggestionHide() {
-  clearItemSuggestionHideTimer();
-  itemSuggestionHideTimer = window.setTimeout(() => {
-    hideItemSuggestions();
+function scheduleItemSuggestionHide(editorKey = 'pc') {
+  const { state } = getItemSuggestionContext(editorKey);
+  clearItemSuggestionHideTimer(editorKey);
+  state.hideTimer = window.setTimeout(() => {
+    hideItemSuggestions(editorKey);
   }, 120);
 }
 
@@ -921,6 +961,37 @@ function parseRequestedItemQuantity() {
   return Math.min(999, Math.max(0, value));
 }
 
+// Resolves the held item currently typed for the selected Pokemon editor.
+function resolveSelectedPokemonHeldItem() {
+  const inputValue = elements.pokemonItemNameInput.value.trim();
+  if (!inputValue) {
+    return { itemId: 0, item: null };
+  }
+
+  const item = lookupItemByName(coreData, inputValue);
+  if (!item) {
+    throw new Error('Choose a valid held item name from the loaded item data.');
+  }
+
+  return {
+    itemId: item.ID,
+    item
+  };
+}
+
+// Loads the currently selected Pokemon's held item into the editor input.
+function hydratePokemonItemEditorFromSelectedSlot() {
+  const slot = getSelectedSlot();
+  if (!slot) {
+    elements.pokemonItemNameInput.value = '';
+    hideItemSuggestions('pokemon');
+    return;
+  }
+
+  elements.pokemonItemNameInput.value = slot.present && slot.heldItemId ? getItemName(slot.heldItemId) : '';
+  hideItemSuggestions('pokemon');
+}
+
 // Loads the currently selected item slot values into the editor inputs.
 function hydrateItemEditorFromSelectedSlot() {
   const slot = getSelectedItemSlot();
@@ -932,7 +1003,7 @@ function hydrateItemEditorFromSelectedSlot() {
 
   elements.itemNameInput.value = slot.present ? getItemName(slot.itemId) : '';
   elements.itemQuantityInput.value = String(slot.present ? slot.quantity : 0);
-  hideItemSuggestions();
+  hideItemSuggestions('pc');
 }
 
 // Renders trainer metadata and save flags from the currently loaded save.
@@ -990,6 +1061,7 @@ function renderPartyGrid() {
     button.addEventListener('click', () => {
       selectedTarget = { kind: 'party', slotIndex: slot.slotIndex };
       hydrateMoveEditorFromSelectedSlot();
+      hydratePokemonItemEditorFromSelectedSlot();
       persistWorkingSave();
       renderAll();
     });
@@ -1075,6 +1147,7 @@ function renderBoxGrid() {
         slotIndex: slot.slotIndex
       };
       hydrateMoveEditorFromSelectedSlot();
+      hydratePokemonItemEditorFromSelectedSlot();
       persistWorkingSave();
       renderAll();
     });
@@ -1143,6 +1216,7 @@ function renderCurrentSlotDetail() {
     createDetailLine('Species', slot.present ? getSpeciesName(slot.speciesId) : 'Empty'),
     createDetailLine('Trainer', slot.present ? `${slot.trainerName || '-'} / ${slot.trainerId}` : '-'),
     createDetailLine('Level', slot.present ? String(slot.level) : '-'),
+    createDetailLine('Held Item', slot.present && slot.heldItemId ? getItemName(slot.heldItemId) : 'None'),
     createDetailLine('Abilities', formatSlotAbilityNames(slot)),
     createDetailLine('Moves', slot.present ? formatMoveNames(slot.moveIds) : 'None')
   ];
@@ -1209,6 +1283,11 @@ function renderReplacementPreview() {
   const abilityNames = blueprint.abilityPool.length
     ? blueprint.abilityPool.map(ability => ability.resolvedName).join(', ')
     : 'None';
+  const heldItemInputValue = elements.pokemonItemNameInput.value.trim();
+  const heldItem = heldItemInputValue ? lookupItemByName(coreData, heldItemInputValue) : null;
+  const heldItemLabel = heldItemInputValue
+    ? (heldItem ? `${getItemName(heldItem.ID)} (#${heldItem.ID})` : 'Invalid item name')
+    : 'None';
 
   const moveNames = blueprint.moveIds.length
     ? blueprint.moveIds.map(moveId => coreData.moves[moveId]?.name || `Move ${moveId}`).join(', ')
@@ -1218,6 +1297,7 @@ function renderReplacementPreview() {
     createDetailLine('Species', `${getSpeciesName(mon.ID)} (#${mon.dexID})`),
     createDetailLine('Level', String(blueprint.level)),
     createDetailLine('Experience', String(blueprint.exp)),
+    createDetailLine('Held Item', heldItemLabel),
     createDetailLine('Abilities', abilityNames),
     createDetailLine('Moves', moveNames),
     createDetailLine('Stats', `HP ${blueprint.stats.maxHp} | Atk ${blueprint.stats.attack} | Def ${blueprint.stats.defense} | Spe ${blueprint.stats.speed} | SpA ${blueprint.stats.specialAttack} | SpD ${blueprint.stats.specialDefense}`),
@@ -1225,6 +1305,39 @@ function renderReplacementPreview() {
   ];
 
   elements.replacementPreview.replaceChildren(...lines);
+}
+
+// Builds the held-item preview for the selected Pokemon editor.
+function renderPokemonItemPreview() {
+  elements.pokemonItemPreview.replaceChildren();
+
+  if (!workingSave || !selectedTarget) {
+    elements.pokemonItemPreview.textContent = 'Select a team or box slot first.';
+    elements.pokemonItemPreview.className = 'detail-body muted';
+    return;
+  }
+
+  const inputValue = elements.pokemonItemNameInput.value.trim();
+  if (!inputValue) {
+    elements.pokemonItemPreview.textContent = 'Leave blank to clear the held item or create a Pokemon with no held item.';
+    elements.pokemonItemPreview.className = 'detail-body muted';
+    return;
+  }
+
+  const item = lookupItemByName(coreData, inputValue);
+  if (!item) {
+    elements.pokemonItemPreview.textContent = 'Held item not found in the current item data.';
+    elements.pokemonItemPreview.className = 'detail-body muted';
+    return;
+  }
+
+  elements.pokemonItemPreview.className = 'detail-body';
+  const lines = [
+    createDetailLine('Item', `${getItemName(item.ID)} (#${item.ID})`),
+    createDetailLine('Description', item.description || 'None')
+  ];
+
+  elements.pokemonItemPreview.replaceChildren(...lines);
 }
 
 // Builds the edited move preview for the selected existing Pokemon slot.
@@ -1309,8 +1422,21 @@ function syncControls() {
   const selectedSlot = getSelectedSlot();
   const selectedItemSlot = getSelectedItemSlot();
   const moveSelection = buildEditedMoveSelectionState();
+  const pokemonHeldItemInput = elements.pokemonItemNameInput.value.trim();
+  const pokemonHeldItemMatch = pokemonHeldItemInput ? lookupItemByName(coreData, pokemonHeldItemInput) : null;
   elements.exportSaveButton.disabled = !workingSave;
-  elements.applySpeciesButton.disabled = !(workingSave && selectedTarget && elements.speciesNameInput.value.trim());
+  elements.applySpeciesButton.disabled = !Boolean(
+    workingSave
+    && selectedTarget
+    && elements.speciesNameInput.value.trim()
+    && (!pokemonHeldItemInput || pokemonHeldItemMatch)
+  );
+  elements.applyPokemonItemButton.disabled = !Boolean(
+    workingSave
+    && selectedTarget
+    && selectedSlot?.present
+    && (!pokemonHeldItemInput || pokemonHeldItemMatch)
+  );
   elements.applyMoveButton.disabled = !Boolean(
     workingSave
     && selectedTarget
@@ -1342,6 +1468,7 @@ function renderAll() {
   renderItemGrid();
   renderCurrentSlotDetail();
   renderReplacementPreview();
+  renderPokemonItemPreview();
   renderReplacementMovePreview();
   renderCurrentItemDetail();
   renderReplacementItemPreview();
@@ -1364,6 +1491,7 @@ async function handleSaveUpload(event) {
     selectedTarget = { kind: 'party', slotIndex: 0 };
     selectedItemSlotIndex = 0;
     hydrateMoveEditorFromSelectedSlot();
+    hydratePokemonItemEditorFromSelectedSlot();
     hydrateItemEditorFromSelectedSlot();
     renderAll();
     persistWorkingSave();
@@ -1373,6 +1501,7 @@ async function handleSaveUpload(event) {
     selectedTarget = null;
     selectedItemSlotIndex = 0;
     hydrateMoveEditorFromSelectedSlot();
+    hydratePokemonItemEditorFromSelectedSlot();
     hydrateItemEditorFromSelectedSlot();
     renderAll();
     clearPersistedSave();
@@ -1393,19 +1522,61 @@ function handleApplySpecies() {
   }
 
   try {
+    const { itemId: heldItemId, item: heldItem } = resolveSelectedPokemonHeldItem();
+
     if (selectedTarget.kind === 'party') {
-      applyPartySpeciesChange(workingSave, selectedTarget.slotIndex, mon.ID, coreData);
+      applyPartySpeciesChange(workingSave, selectedTarget.slotIndex, mon.ID, coreData, heldItemId);
     } else {
-      applyBoxSpeciesChange(workingSave, selectedTarget.boxNumber, selectedTarget.slotIndex, mon.ID, coreData);
+      applyBoxSpeciesChange(workingSave, selectedTarget.boxNumber, selectedTarget.slotIndex, mon.ID, coreData, heldItemId);
       selectedBoxNumber = selectedTarget.boxNumber;
     }
 
     hydrateMoveEditorFromSelectedSlot();
+    hydratePokemonItemEditorFromSelectedSlot();
     renderAll();
     persistWorkingSave();
-    setStatus(`Applied ${getSpeciesName(mon.ID)} to ${formatTargetLabel(selectedTarget)}.`, 'success');
+    setStatus(
+      `Applied ${getSpeciesName(mon.ID)}${heldItem ? ` holding ${getItemName(heldItem.ID)}` : ''} to ${formatTargetLabel(selectedTarget)}.`,
+      'success'
+    );
   } catch (error) {
     setStatus(error.message || 'Unable to apply that Pokemon.', 'error');
+  }
+}
+
+// Applies the selected held item to the currently selected existing Pokemon slot.
+function handleApplyPokemonItem() {
+  if (!workingSave || !selectedTarget) {
+    return;
+  }
+
+  const slot = getSelectedSlot();
+  if (!slot?.present) {
+    setStatus('Select an existing Pokemon before editing its held item.', 'error');
+    return;
+  }
+
+  try {
+    const { itemId, item } = resolveSelectedPokemonHeldItem();
+
+    if (selectedTarget.kind === 'party') {
+      applyPartyHeldItemChange(workingSave, selectedTarget.slotIndex, itemId, coreData);
+    } else {
+      applyBoxHeldItemChange(workingSave, selectedTarget.boxNumber, selectedTarget.slotIndex, itemId, coreData);
+      selectedBoxNumber = selectedTarget.boxNumber;
+    }
+
+    hydratePokemonItemEditorFromSelectedSlot();
+    renderAll();
+    persistWorkingSave();
+    setStatus(
+      item
+        ? `Applied ${getItemName(item.ID)} to ${formatTargetLabel(selectedTarget)}.`
+        : `Cleared the held item on ${formatTargetLabel(selectedTarget)}.`,
+      'success'
+    );
+  } catch (error) {
+    setStatus(error.message || 'Unable to apply that held item.', 'error');
   }
 }
 
@@ -1506,6 +1677,7 @@ async function start() {
     renderAll();
     const restored = await restorePersistedSave();
     hydrateMoveEditorFromSelectedSlot();
+    hydratePokemonItemEditorFromSelectedSlot();
     hydrateItemEditorFromSelectedSlot();
     renderAll();
     setStatus(
@@ -1522,6 +1694,7 @@ async function start() {
 
 elements.saveFileInput.addEventListener('change', handleSaveUpload);
 elements.applySpeciesButton.addEventListener('click', handleApplySpecies);
+elements.applyPokemonItemButton.addEventListener('click', handleApplyPokemonItem);
 elements.applyMoveButton.addEventListener('click', handleApplyMoves);
 elements.applyItemButton.addEventListener('click', handleApplyItem);
 elements.exportSaveButton.addEventListener('click', handleExport);
@@ -1604,42 +1777,81 @@ elements.moveSuggestionLists.forEach(list => {
 elements.itemNameInput.addEventListener('input', () => {
   renderReplacementItemPreview();
   syncControls();
-  renderItemSuggestions(elements.itemNameInput.value);
+  renderItemSuggestions('pc', elements.itemNameInput.value);
 });
 elements.itemNameInput.addEventListener('focus', () => {
-  renderItemSuggestions(elements.itemNameInput.value);
+  renderItemSuggestions('pc', elements.itemNameInput.value);
 });
 elements.itemNameInput.addEventListener('blur', () => {
-  scheduleItemSuggestionHide();
+  scheduleItemSuggestionHide('pc');
 });
 elements.itemNameInput.addEventListener('keydown', event => {
-  if (event.key === 'ArrowDown' && visibleItemSuggestions.length) {
+  const state = itemSuggestionEditors.pc;
+  if (event.key === 'ArrowDown' && state.visibleSuggestions.length) {
     event.preventDefault();
-    moveActiveItemSuggestion(1);
+    moveActiveItemSuggestion(1, 'pc');
     return;
   }
 
-  if (event.key === 'ArrowUp' && visibleItemSuggestions.length) {
+  if (event.key === 'ArrowUp' && state.visibleSuggestions.length) {
     event.preventDefault();
-    moveActiveItemSuggestion(-1);
+    moveActiveItemSuggestion(-1, 'pc');
     return;
   }
 
-  if (event.key === 'Enter' && activeItemSuggestionIndex >= 0) {
+  if (event.key === 'Enter' && state.activeSuggestionIndex >= 0) {
     event.preventDefault();
-    applyItemSuggestion(visibleItemSuggestions[activeItemSuggestionIndex]);
+    applyItemSuggestion(state.visibleSuggestions[state.activeSuggestionIndex], 'pc');
     return;
   }
 
   if (event.key === 'Escape') {
-    hideItemSuggestions();
+    hideItemSuggestions('pc');
+  }
+});
+elements.pokemonItemNameInput.addEventListener('input', () => {
+  renderReplacementPreview();
+  renderPokemonItemPreview();
+  syncControls();
+  renderItemSuggestions('pokemon', elements.pokemonItemNameInput.value);
+});
+elements.pokemonItemNameInput.addEventListener('focus', () => {
+  renderItemSuggestions('pokemon', elements.pokemonItemNameInput.value);
+});
+elements.pokemonItemNameInput.addEventListener('blur', () => {
+  scheduleItemSuggestionHide('pokemon');
+});
+elements.pokemonItemNameInput.addEventListener('keydown', event => {
+  const state = itemSuggestionEditors.pokemon;
+  if (event.key === 'ArrowDown' && state.visibleSuggestions.length) {
+    event.preventDefault();
+    moveActiveItemSuggestion(1, 'pokemon');
+    return;
+  }
+
+  if (event.key === 'ArrowUp' && state.visibleSuggestions.length) {
+    event.preventDefault();
+    moveActiveItemSuggestion(-1, 'pokemon');
+    return;
+  }
+
+  if (event.key === 'Enter' && state.activeSuggestionIndex >= 0) {
+    event.preventDefault();
+    applyItemSuggestion(state.visibleSuggestions[state.activeSuggestionIndex], 'pokemon');
+    return;
+  }
+
+  if (event.key === 'Escape') {
+    hideItemSuggestions('pokemon');
   }
 });
 elements.itemQuantityInput.addEventListener('input', () => {
   renderReplacementItemPreview();
   syncControls();
 });
-elements.itemSuggestionList.addEventListener('mouseenter', clearItemSuggestionHideTimer);
-elements.itemSuggestionList.addEventListener('mouseleave', scheduleItemSuggestionHide);
+elements.itemSuggestionList.addEventListener('mouseenter', () => clearItemSuggestionHideTimer('pc'));
+elements.itemSuggestionList.addEventListener('mouseleave', () => scheduleItemSuggestionHide('pc'));
+elements.pokemonItemSuggestionList.addEventListener('mouseenter', () => clearItemSuggestionHideTimer('pokemon'));
+elements.pokemonItemSuggestionList.addEventListener('mouseleave', () => scheduleItemSuggestionHide('pokemon'));
 
 start();

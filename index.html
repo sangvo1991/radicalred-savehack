@@ -93,6 +93,21 @@
           <button id="applySpeciesButton" type="button" disabled>Apply To Selected Slot</button>
         </div>
 
+        <label class="field">
+          <span>Held Item</span>
+          <div class="field-autocomplete">
+            <input id="pokemonItemNameInput" type="text" autocomplete="off" placeholder="Leave blank for none">
+            <div id="pokemonItemSuggestionList" class="species-suggestion-list" hidden></div>
+          </div>
+          <small class="field-help">
+            Applies to the selected Pokemon. When you add a new Pokemon, the generated entry will use this held item too.
+          </small>
+        </label>
+
+        <div class="editor-actions">
+          <button id="applyPokemonItemButton" type="button" disabled>Apply Held Item To Selected Slot</button>
+        </div>
+
         <section class="inline-editor-section">
           <h3>Edit Existing Moves</h3>
           <div class="move-editor-grid">
@@ -145,6 +160,13 @@
             <h3>Generated Replacement</h3>
             <div id="replacementPreview" class="detail-body muted">
               Type a Pokemon name to preview the generated entry.
+            </div>
+          </section>
+
+          <section class="detail-card">
+            <h3>Held Item Preview</h3>
+            <div id="pokemonItemPreview" class="detail-body muted">
+              Type an item name to preview the selected Pokemon's held item.
             </div>
           </section>
 

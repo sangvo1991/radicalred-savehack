@@ -751,7 +751,7 @@ function buildMetInfo(level, playerGender) {
 }
 
 // Creates one fully populated party record from a target species and the save's trainer metadata.
-function buildPartyEntry(speciesId, slotIndex, state, coreData) {
+function buildPartyEntry(speciesId, slotIndex, state, coreData, heldItemId = 0) {
   const mon = coreData.species[speciesId];
   if (!mon) {
     throw new Error(`Unknown species id ${speciesId}.`);
@@ -778,7 +778,7 @@ function buildPartyEntry(speciesId, slotIndex, state, coreData) {
   );
   entryBytes[POKEMON_MARKINGS_OFFSET] = 0;
   writeUint16LE(entryBytes, PARTY_POKEMON_SPECIES_OFFSET, speciesId);
-  writeUint16LE(entryBytes, PARTY_POKEMON_HELD_ITEM_OFFSET, 0);
+  writeUint16LE(entryBytes, PARTY_POKEMON_HELD_ITEM_OFFSET, heldItemId > 0 ? heldItemId : 0);
   writeUint32LE(entryBytes, PARTY_POKEMON_EXP_OFFSET, blueprint.exp);
   entryBytes.subarray(PARTY_POKEMON_MOVES_OFFSET, PARTY_POKEMON_MOVES_OFFSET + 8).fill(0);
   entryBytes.subarray(PARTY_POKEMON_PP_OFFSET, PARTY_POKEMON_PP_OFFSET + 4).fill(0);
@@ -804,7 +804,7 @@ function buildPartyEntry(speciesId, slotIndex, state, coreData) {
 }
 
 // Creates one fully populated boxed entry using RR's 58-byte compressed box format.
-function buildBoxEntry(speciesId, boxNumber, slotIndex, state, coreData) {
+function buildBoxEntry(speciesId, boxNumber, slotIndex, state, coreData, heldItemId = 0) {
   const mon = coreData.species[speciesId];
   if (!mon) {
     throw new Error(`Unknown species id ${speciesId}.`);
@@ -839,7 +839,7 @@ function buildBoxEntry(speciesId, boxNumber, slotIndex, state, coreData) {
   entryBytes[POKEMON_MARKINGS_OFFSET] = existingSlot?.present ? existingSlot.rawBytes[POKEMON_MARKINGS_OFFSET] : 0;
 
   writeUint16LE(entryBytes, BOX_POKEMON_SPECIES_OFFSET, speciesId);
-  writeUint16LE(entryBytes, BOX_POKEMON_HELD_ITEM_OFFSET, 0);
+  writeUint16LE(entryBytes, BOX_POKEMON_HELD_ITEM_OFFSET, heldItemId > 0 ? heldItemId : 0);
   writeUint32LE(entryBytes, BOX_POKEMON_EXP_OFFSET, blueprint.exp);
   entryBytes[BOX_POKEMON_PP_BONUSES_OFFSET] = 0;
   entryBytes[BOX_POKEMON_FRIENDSHIP_OFFSET] = DEFAULT_FRIENDSHIP;
@@ -920,6 +920,28 @@ export function applyPcItemChange(state, slotIndex, itemId, quantity, coreData) 
   hydrateSaveState(state, coreData);
 }
 
+// Applies one held-item change to a selected party slot and refreshes derived state.
+export function applyPartyHeldItemChange(state, slotIndex, heldItemId, coreData) {
+  const slot = state.partySlots?.[slotIndex];
+  if (!slot) {
+    throw new Error(`Unsupported party slot ${slotIndex}.`);
+  }
+
+  const entryOffset = PARTY_POKEMON_SAVE_BLOCK1_OFFSET + slotIndex * PARTY_POKEMON_SIZE;
+  const entryBytes = state.saveBlock1.subarray(entryOffset, entryOffset + PARTY_POKEMON_SIZE);
+  writeUint16LE(entryBytes, PARTY_POKEMON_HELD_ITEM_OFFSET, Math.max(0, Number(heldItemId) || 0));
+  hydrateSaveState(state, coreData);
+}
+
+// Applies one held-item change to a selected box slot and refreshes derived state.
+export function applyBoxHeldItemChange(state, boxNumber, slotIndex, heldItemId, coreData) {
+  const { storageKey, entryOffset } = getBoxSlotLocation(boxNumber, slotIndex);
+  const buffer = getStateBuffer(state, storageKey);
+  const entryBytes = buffer.subarray(entryOffset, entryOffset + BOX_POKEMON_SIZE);
+  writeUint16LE(entryBytes, BOX_POKEMON_HELD_ITEM_OFFSET, Math.max(0, Number(heldItemId) || 0));
+  hydrateSaveState(state, coreData);
+}
+
 // Applies one edited move list to a selected party slot and refreshes derived state.
 export function applyPartyMoveChange(state, slotIndex, moveIds, coreData) {
   const slot = state.partySlots?.[slotIndex];
@@ -951,8 +973,8 @@ export function applyBoxMoveChange(state, boxNumber, slotIndex, moveIds, coreDat
 }
 
 // Applies one species replacement to a selected party slot and refreshes derived state.
-export function applyPartySpeciesChange(state, slotIndex, speciesId, coreData) {
-  const entryBytes = buildPartyEntry(speciesId, slotIndex, state, coreData);
+export function applyPartySpeciesChange(state, slotIndex, speciesId, coreData, heldItemId = 0) {
+  const entryBytes = buildPartyEntry(speciesId, slotIndex, state, coreData, heldItemId);
   const entryOffset = PARTY_POKEMON_SAVE_BLOCK1_OFFSET + slotIndex * PARTY_POKEMON_SIZE;
   state.saveBlock1.set(entryBytes, entryOffset);
   state.saveBlock1[PARTY_COUNT_SAVE_BLOCK1_OFFSET] = Math.max(state.saveBlock1[PARTY_COUNT_SAVE_BLOCK1_OFFSET] || 0, slotIndex + 1);
@@ -960,10 +982,10 @@ export function applyPartySpeciesChange(state, slotIndex, speciesId, coreData) {
 }
 
 // Applies one species replacement to a selected box slot and refreshes derived state.
-export function applyBoxSpeciesChange(state, boxNumber, slotIndex, speciesId, coreData) {
+export function applyBoxSpeciesChange(state, boxNumber, slotIndex, speciesId, coreData, heldItemId = 0) {
   const { storageKey, entryOffset } = getBoxSlotLocation(boxNumber, slotIndex);
   const buffer = getStateBuffer(state, storageKey);
-  const entryBytes = buildBoxEntry(speciesId, boxNumber, slotIndex, state, coreData);
+  const entryBytes = buildBoxEntry(speciesId, boxNumber, slotIndex, state, coreData, heldItemId);
   buffer.set(entryBytes, entryOffset);
   hydrateSaveState(state, coreData);
 }
