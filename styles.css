@@ -951,7 +951,43 @@ button,
 }
 
 @media (max-width: 760px) {
+  .layout {
+    width: calc(100% - 20px);
+    max-width: 620px;
+  }
+
+  .layout,
+  .workspace,
+  .workspace > *,
+  .panel,
+  .metadata-card,
+  .party-grid,
+  .box-grid,
+  .slot-card,
+  .slot-card-content,
+  .details-stack,
+  .detail-card {
+    min-width: 0;
+    max-width: 100%;
+  }
+
   .empty-state {
     min-height: 96px;
+  }
+
+  .metadata-card,
+  .party-grid,
+  .box-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .slot-name,
+  .slot-subtext {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .box-tabs {
+    max-width: 100%;
   }
 }
