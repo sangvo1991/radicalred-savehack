@@ -902,7 +902,22 @@ button,
 
   .workspace {
     grid-template-columns: minmax(0, 1fr) minmax(380px, 430px);
+    grid-template-areas:
+      "team editor"
+      "boxes editor";
     gap: 20px;
+  }
+
+  .workspace > .panel-main {
+    grid-area: team;
+  }
+
+  .workspace > .panel-side {
+    grid-area: editor;
+  }
+
+  .workspace > .box-panel {
+    grid-area: boxes;
   }
 
   .party-grid {
@@ -911,6 +926,27 @@ button,
 
   .box-grid {
     grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1120px) {
+  .workspace {
+    grid-template-areas:
+      "team"
+      "editor"
+      "boxes";
+  }
+
+  .workspace > .panel-main {
+    grid-area: team;
+  }
+
+  .workspace > .panel-side {
+    grid-area: editor;
+  }
+
+  .workspace > .box-panel {
+    grid-area: boxes;
   }
 }
 
