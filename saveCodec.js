@@ -138,6 +138,13 @@ function readUint32LE(bytes, offset) {
   ) >>> 0;
 }
 
+// Uses the Generation III shiny formula for one stored Pokemon personality value.
+function isShinyPersonality(personality, trainerId) {
+  const trainerXor = ((trainerId & 0xFFFF) ^ (trainerId >>> 16)) & 0xFFFF;
+  const personalityXor = ((personality & 0xFFFF) ^ (personality >>> 16)) & 0xFFFF;
+  return (trainerXor ^ personalityXor) < 8;
+}
+
 // Writes one little-endian 16-bit value into a Uint8Array.
 function writeUint16LE(bytes, offset, value) {
   bytes[offset] = value & 0xFF;
@@ -517,6 +524,7 @@ function buildSyntheticEmptyBoxSlot(boxNumber, slotIndex) {
     level: 0,
     exp: 0,
     heldItemId: 0,
+    shiny: false,
     moveIds: []
   };
 }
@@ -553,6 +561,8 @@ function parsePartySlot(saveBlock1, slotIndex, coreData) {
     }
   }
 
+  const trainerId = readUint32LE(rawBytes, 0x04);
+
   return {
     kind: 'party',
     slotIndex,
@@ -569,7 +579,8 @@ function parsePartySlot(saveBlock1, slotIndex, coreData) {
       POKEMON_OT_NAME_LENGTH,
       coreData.abilityRandomizer.CHARACTER_ENCODINGS
     ),
-    trainerId: readUint32LE(rawBytes, 0x04),
+    trainerId,
+    shiny: present && isShinyPersonality(readUint32LE(rawBytes, 0x00), trainerId),
     level: present ? rawBytes[PARTY_POKEMON_LEVEL_OFFSET] : 0,
     exp: present ? readUint32LE(rawBytes, PARTY_POKEMON_EXP_OFFSET) : 0,
     heldItemId: present ? readUint16LE(rawBytes, PARTY_POKEMON_HELD_ITEM_OFFSET) : 0,
@@ -603,6 +614,8 @@ function parseBoxSlot(state, boxNumber, slotIndex, coreData) {
   const mon = present ? coreData.species[speciesId] : null;
   const exp = present ? readUint32LE(rawBytes, BOX_POKEMON_EXP_OFFSET) : 0;
 
+  const trainerId = readUint32LE(rawBytes, 0x04);
+
   return {
     kind: 'box',
     boxNumber,
@@ -620,7 +633,8 @@ function parseBoxSlot(state, boxNumber, slotIndex, coreData) {
       POKEMON_OT_NAME_LENGTH,
       coreData.abilityRandomizer.CHARACTER_ENCODINGS
     ),
-    trainerId: readUint32LE(rawBytes, 0x04),
+    trainerId,
+    shiny: present && isShinyPersonality(readUint32LE(rawBytes, 0x00), trainerId),
     level: present && mon ? estimateLevelFromExperience(mon, exp, coreData) : 0,
     exp,
     heldItemId: present ? readUint16LE(rawBytes, BOX_POKEMON_HELD_ITEM_OFFSET) : 0,
@@ -709,14 +723,33 @@ export function formatSaveFlags(metadata) {
 }
 
 // Chooses a stable personality value while forcing neutral nature and the primary ability slot.
-function buildPersonalityValue(trainedId, speciesId, positionSeed) {
+// Shiny personalities are constructed against the save's full trainer ID.
+function buildPersonalityValue(trainedId, speciesId, positionSeed, shiny = false) {
   let value = (
     Math.imul((trainedId >>> 0) || 1, 1664525)
     + Math.imul((speciesId >>> 0) || 1, 1013904223)
     + positionSeed * 97
   ) >>> 0;
   value = (value - (value % 50)) >>> 0;
-  return value === 0 ? 50 : value;
+
+  if (!shiny) {
+    return value === 0 ? 50 : value;
+  }
+
+  const trainerXor = ((trainedId & 0xFFFF) ^ (trainedId >>> 16)) & 0xFFFF;
+  const startLow = (speciesId * 977 + positionSeed * 131) & 0xFFFF;
+  for (let offset = 0; offset <= 0xFFFF; offset += 1) {
+    const low = (startLow + offset) & 0xFFFF;
+    for (let shinyValue = 0; shinyValue < 8; shinyValue += 1) {
+      const high = (trainerXor ^ low ^ shinyValue) & 0xFFFF;
+      const personality = ((((high << 16) >>> 0) | low) >>> 0);
+      if (personality % 50 === 0 && personality !== 0) {
+        return personality;
+      }
+    }
+  }
+
+  throw new Error('Unable to construct a shiny personality value.');
 }
 
 // Selects an occupied party slot as a donor so unknown bytes stay close to a real save entry.
@@ -751,7 +784,7 @@ function buildMetInfo(level, playerGender) {
 }
 
 // Creates one fully populated party record from a target species and the save's trainer metadata.
-function buildPartyEntry(speciesId, slotIndex, state, coreData, heldItemId = 0) {
+function buildPartyEntry(speciesId, slotIndex, state, coreData, heldItemId = 0, shiny = false) {
   const mon = coreData.species[speciesId];
   if (!mon) {
     throw new Error(`Unknown species id ${speciesId}.`);
@@ -762,7 +795,7 @@ function buildPartyEntry(speciesId, slotIndex, state, coreData, heldItemId = 0) 
     ? state.partySlots[slotIndex].rawBytes
     : findPartyDonorBytes(state);
   const entryBytes = new Uint8Array(donorBytes);
-  const personality = buildPersonalityValue(state.metadata.trainedId, speciesId, slotIndex + 1);
+  const personality = buildPersonalityValue(state.metadata.trainedId, speciesId, slotIndex + 1, shiny);
 
   writeUint32LE(entryBytes, 0x00, personality);
   writeUint32LE(entryBytes, 0x04, state.metadata.trainedId);
@@ -804,7 +837,7 @@ function buildPartyEntry(speciesId, slotIndex, state, coreData, heldItemId = 0) 
 }
 
 // Creates one fully populated boxed entry using RR's 58-byte compressed box format.
-function buildBoxEntry(speciesId, boxNumber, slotIndex, state, coreData, heldItemId = 0) {
+function buildBoxEntry(speciesId, boxNumber, slotIndex, state, coreData, heldItemId = 0, shiny = false) {
   const mon = coreData.species[speciesId];
   if (!mon) {
     throw new Error(`Unknown species id ${speciesId}.`);
@@ -818,7 +851,8 @@ function buildBoxEntry(speciesId, boxNumber, slotIndex, state, coreData, heldIte
   const personality = buildPersonalityValue(
     state.metadata.trainedId,
     speciesId,
-    ((boxNumber - 1) * BOX_CAPACITY) + slotIndex + 1
+    ((boxNumber - 1) * BOX_CAPACITY) + slotIndex + 1,
+    shiny
   );
   const entryBytes = new Uint8Array(BOX_POKEMON_SIZE);
 
@@ -865,7 +899,7 @@ function buildEditableMovePoolForSlot(slot, state, coreData) {
     return [];
   }
 
-  return buildEditableMovePool(mon, state.metadata, coreData, slot.level);
+  return buildEditableMovePool(mon, state.metadata, coreData);
 }
 
 // Normalizes the edited move list into four-or-fewer stored move ids.
@@ -973,8 +1007,8 @@ export function applyBoxMoveChange(state, boxNumber, slotIndex, moveIds, coreDat
 }
 
 // Applies one species replacement to a selected party slot and refreshes derived state.
-export function applyPartySpeciesChange(state, slotIndex, speciesId, coreData, heldItemId = 0) {
-  const entryBytes = buildPartyEntry(speciesId, slotIndex, state, coreData, heldItemId);
+export function applyPartySpeciesChange(state, slotIndex, speciesId, coreData, heldItemId = 0, shiny = false) {
+  const entryBytes = buildPartyEntry(speciesId, slotIndex, state, coreData, heldItemId, shiny);
   const entryOffset = PARTY_POKEMON_SAVE_BLOCK1_OFFSET + slotIndex * PARTY_POKEMON_SIZE;
   state.saveBlock1.set(entryBytes, entryOffset);
   state.saveBlock1[PARTY_COUNT_SAVE_BLOCK1_OFFSET] = Math.max(state.saveBlock1[PARTY_COUNT_SAVE_BLOCK1_OFFSET] || 0, slotIndex + 1);
@@ -982,10 +1016,10 @@ export function applyPartySpeciesChange(state, slotIndex, speciesId, coreData, h
 }
 
 // Applies one species replacement to a selected box slot and refreshes derived state.
-export function applyBoxSpeciesChange(state, boxNumber, slotIndex, speciesId, coreData, heldItemId = 0) {
+export function applyBoxSpeciesChange(state, boxNumber, slotIndex, speciesId, coreData, heldItemId = 0, shiny = false) {
   const { storageKey, entryOffset } = getBoxSlotLocation(boxNumber, slotIndex);
   const buffer = getStateBuffer(state, storageKey);
-  const entryBytes = buildBoxEntry(speciesId, boxNumber, slotIndex, state, coreData, heldItemId);
+  const entryBytes = buildBoxEntry(speciesId, boxNumber, slotIndex, state, coreData, heldItemId, shiny);
   buffer.set(entryBytes, entryOffset);
   hydrateSaveState(state, coreData);
 }

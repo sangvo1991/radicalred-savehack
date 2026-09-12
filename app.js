@@ -44,6 +44,7 @@ const elements = {
   boxGrid: document.getElementById('boxGrid'),
   selectedTargetLabel: document.getElementById('selectedTargetLabel'),
   selectedCurrentPokemon: document.getElementById('selectedCurrentPokemon'),
+  shinyInput: document.getElementById('shinyInput'),
   pokemonItemNameInput: document.getElementById('pokemonItemNameInput'),
   pokemonItemSuggestionList: document.getElementById('pokemonItemSuggestionList'),
   applyPokemonItemButton: document.getElementById('applyPokemonItemButton'),
@@ -97,6 +98,7 @@ const MAX_SPECIES_SUGGESTIONS = 5;
 const MAX_ITEM_SUGGESTIONS = 5;
 const MAX_MOVE_SUGGESTIONS = 5;
 const PERSISTED_SAVE_STORAGE_KEY = 'rr-save-hack.persisted-save';
+const GRAPHICS_ROOT = '../graphics';
 
 function getItemSuggestionContext(editorKey) {
   if (editorKey === 'pokemon') {
@@ -269,6 +271,63 @@ function getItemName(itemId) {
   return itemId && coreData?.items?.[itemId]
     ? coreData.itemDisplayNames?.get(itemId) || coreData.items[itemId].name
     : 'Empty';
+}
+
+// Returns the existing repository sprite path for one species or item.
+function getSpeciesSpritePath(speciesId, shiny = false) {
+  const folder = shiny ? 'species/front shiny' : 'species/front';
+  return encodeURI(`${GRAPHICS_ROOT}/${folder}/${speciesId}.png`);
+}
+
+function getItemSpritePath(itemId) {
+  return encodeURI(`${GRAPHICS_ROOT}/items/${itemId}.png`);
+}
+
+// Creates a resilient sprite element that hides itself if an asset is unavailable.
+function createSpriteImage(source, alt, className, fallbackSource = null) {
+  const image = document.createElement('img');
+  let fallbackAttempted = false;
+  image.className = className;
+  image.alt = alt;
+  image.loading = 'lazy';
+  image.decoding = 'async';
+  image.src = source;
+  image.addEventListener('error', () => {
+    if (fallbackSource && !fallbackAttempted) {
+      fallbackAttempted = true;
+      image.src = fallbackSource;
+      return;
+    }
+    image.hidden = true;
+  });
+  return image;
+}
+
+function createPokemonSprite(slot, className = 'slot-sprite') {
+  if (!slot?.present || !slot.speciesId) {
+    return null;
+  }
+
+  const regularPath = getSpeciesSpritePath(slot.speciesId);
+  const shinyPath = getSpeciesSpritePath(slot.speciesId, true);
+  return createSpriteImage(
+    slot.shiny ? shinyPath : regularPath,
+    `${getSpeciesName(slot.speciesId)}${slot.shiny ? ' shiny' : ''} sprite`,
+    className,
+    slot.shiny ? regularPath : null
+  );
+}
+
+function createItemSprite(itemId, className = 'item-sprite') {
+  if (!itemId) {
+    return null;
+  }
+
+  return createSpriteImage(
+    getItemSpritePath(itemId),
+    `${getItemName(itemId)} item sprite`,
+    className
+  );
 }
 
 // Formats one move list into the compact text used by the detail panels.
@@ -644,7 +703,7 @@ function isMoveEditableSlot(slot = getSelectedSlot()) {
   return Boolean(workingSave && slot?.present);
 }
 
-// Builds the legal move pool for the selected slot using its current species, level, and save rules.
+// Builds the legal move pool for the selected slot using its current species and save rules.
 function buildSelectedSlotMovePool() {
   const slot = getSelectedSlot();
   if (!isMoveEditableSlot(slot)) {
@@ -656,7 +715,7 @@ function buildSelectedSlotMovePool() {
     return [];
   }
 
-  return buildEditableMovePool(mon, workingSave.metadata, coreData, slot.level).map(move => ({
+  return buildEditableMovePool(mon, workingSave.metadata, coreData).map(move => ({
     ...move,
     normalizedLabel: normalizeMoveLookupKey(move.name)
   }));
@@ -865,7 +924,7 @@ function renderMoveSuggestions(fieldIndex, query, preserveActiveIndex = false) {
 
     const meta = document.createElement('span');
     meta.className = 'species-suggestion-meta';
-    meta.textContent = suggestion.level !== null ? `Lv ${suggestion.level}` : suggestion.source;
+    meta.textContent = suggestion.source;
     button.appendChild(meta);
 
     button.addEventListener('mousedown', event => {
@@ -1024,6 +1083,42 @@ function renderMetadata() {
   elements.progressionSummary.textContent = workingSave.metadata.progression?.summary || 'Unknown';
 }
 
+// Builds the compact visual used by party and box slots on both desktop and mobile.
+function buildPokemonSlotContent(slot, emptyMessage) {
+  const visual = document.createElement('div');
+  visual.className = 'slot-card-visual';
+  const sprite = createPokemonSprite(slot);
+  if (sprite) {
+    visual.appendChild(sprite);
+  } else {
+    const placeholder = document.createElement('span');
+    placeholder.className = 'slot-sprite-placeholder';
+    placeholder.textContent = '--';
+    visual.appendChild(placeholder);
+  }
+
+  const content = document.createElement('div');
+  content.className = 'slot-card-content';
+  const label = document.createElement('span');
+  label.className = 'slot-label';
+  label.textContent = `Slot ${slot.slotNumber}`;
+
+  const name = document.createElement('span');
+  name.className = 'slot-name';
+  name.textContent = slot.present
+    ? `${getSpeciesName(slot.speciesId)}${slot.shiny ? ' [Shiny]' : ''}`
+    : 'Empty';
+
+  const subtext = document.createElement('span');
+  subtext.className = 'slot-subtext';
+  subtext.textContent = slot.present
+    ? `Lv ${slot.level} | ${slot.heldItemId ? `Held: ${getItemName(slot.heldItemId)}` : 'No held item'}`
+    : emptyMessage;
+
+  content.replaceChildren(label, name, subtext);
+  return [visual, content];
+}
+
 // Rebuilds the six-slot team grid and keeps the selected slot highlighted.
 function renderPartyGrid() {
   elements.partyGrid.replaceChildren();
@@ -1043,21 +1138,7 @@ function renderPartyGrid() {
       button.classList.add('selected');
     }
 
-    const label = document.createElement('span');
-    label.className = 'slot-label';
-    label.textContent = `Slot ${slot.slotNumber}`;
-
-    const name = document.createElement('span');
-    name.className = 'slot-name';
-    name.textContent = getSpeciesName(slot.speciesId);
-
-    const subtext = document.createElement('span');
-    subtext.className = 'slot-subtext';
-    subtext.textContent = slot.present
-      ? `Lv ${slot.level} | ${formatMoveNames(slot.moveIds)}`
-      : 'Click to target this empty team slot.';
-
-    button.replaceChildren(label, name, subtext);
+    button.replaceChildren(...buildPokemonSlotContent(slot, 'Click to target this empty team slot.'));
     button.addEventListener('click', () => {
       selectedTarget = { kind: 'party', slotIndex: slot.slotIndex };
       hydrateMoveEditorFromSelectedSlot();
@@ -1125,21 +1206,7 @@ function renderBoxGrid() {
       button.classList.add('selected');
     }
 
-    const label = document.createElement('span');
-    label.className = 'slot-label';
-    label.textContent = `Slot ${slot.slotNumber}`;
-
-    const name = document.createElement('span');
-    name.className = 'slot-name';
-    name.textContent = getSpeciesName(slot.speciesId);
-
-    const subtext = document.createElement('span');
-    subtext.className = 'slot-subtext';
-    subtext.textContent = slot.present
-      ? `Lv ${slot.level} | ${formatMoveNames(slot.moveIds)}`
-      : 'Click to target this empty box slot.';
-
-    button.replaceChildren(label, name, subtext);
+    button.replaceChildren(...buildPokemonSlotContent(slot, 'Click to target this empty box slot.'));
     button.addEventListener('click', () => {
       selectedTarget = {
         kind: 'box',
@@ -1174,21 +1241,31 @@ function renderItemGrid() {
       button.classList.add('selected');
     }
 
+    const visual = document.createElement('div');
+    visual.className = 'slot-card-visual item-card-visual';
+    const sprite = createItemSprite(slot.itemId);
+    if (sprite) {
+      visual.appendChild(sprite);
+    } else {
+      const placeholder = document.createElement('span');
+      placeholder.className = 'slot-sprite-placeholder';
+      placeholder.textContent = '--';
+      visual.appendChild(placeholder);
+    }
+
+    const content = document.createElement('div');
+    content.className = 'slot-card-content';
     const label = document.createElement('span');
     label.className = 'slot-label';
     label.textContent = `Slot ${slot.slotNumber}`;
-
     const name = document.createElement('span');
     name.className = 'slot-name';
-    name.textContent = getItemName(slot.itemId);
-
+    name.textContent = slot.present ? getItemName(slot.itemId) : 'Empty';
     const subtext = document.createElement('span');
     subtext.className = 'slot-subtext';
-    subtext.textContent = slot.present
-      ? `x${slot.quantity}`
-      : 'Click to target this empty item slot.';
-
-    button.replaceChildren(label, name, subtext);
+    subtext.textContent = slot.present ? `x${slot.quantity}` : 'Click to target this empty item slot.';
+    content.replaceChildren(label, name, subtext);
+    button.replaceChildren(visual, content);
     button.addEventListener('click', () => {
       selectedItemSlotIndex = slot.slotIndex;
       hydrateItemEditorFromSelectedSlot();
@@ -1225,7 +1302,20 @@ function renderCurrentSlotDetail() {
     lines.push(createDetailLine('Stats', `HP ${slot.currentHp}/${slot.maxHp} | Atk ${slot.attack} | Def ${slot.defense} | Spe ${slot.speed} | SpA ${slot.specialAttack} | SpD ${slot.specialDefense}`));
   }
 
-  elements.currentSlotDetail.replaceChildren(...lines);
+  const identity = document.createElement('div');
+  identity.className = 'detail-identity';
+  const sprite = createPokemonSprite(slot, 'detail-sprite');
+  if (sprite) {
+    identity.appendChild(sprite);
+  }
+  const identityCopy = document.createElement('div');
+  identityCopy.className = 'detail-identity-copy';
+  identityCopy.textContent = slot.present
+    ? `${getSpeciesName(slot.speciesId)}${slot.shiny ? ' [Shiny]' : ''}`
+    : 'Empty slot';
+  identity.appendChild(identityCopy);
+
+  elements.currentSlotDetail.replaceChildren(identity, ...lines);
 }
 
 // Refreshes the current PC item slot inspector on the right side.
@@ -1251,7 +1341,18 @@ function renderCurrentItemDetail() {
     lines.push(createDetailLine('Description', item.description));
   }
 
-  elements.currentItemDetail.replaceChildren(...lines);
+  const identity = document.createElement('div');
+  identity.className = 'detail-identity';
+  const sprite = createItemSprite(slot.present ? slot.itemId : 0, 'detail-sprite item-detail-sprite');
+  if (sprite) {
+    identity.appendChild(sprite);
+  }
+  const identityCopy = document.createElement('div');
+  identityCopy.className = 'detail-identity-copy';
+  identityCopy.textContent = slot.present ? getItemName(slot.itemId) : 'Empty item slot';
+  identity.appendChild(identityCopy);
+
+  elements.currentItemDetail.replaceChildren(identity, ...lines);
 }
 
 // Builds the generated replacement preview for the currently typed species name.
@@ -1288,6 +1389,7 @@ function renderReplacementPreview() {
   const heldItemLabel = heldItemInputValue
     ? (heldItem ? `${getItemName(heldItem.ID)} (#${heldItem.ID})` : 'Invalid item name')
     : 'None';
+  const shinyLabel = elements.shinyInput.checked ? 'Yes' : 'No';
 
   const moveNames = blueprint.moveIds.length
     ? blueprint.moveIds.map(moveId => coreData.moves[moveId]?.name || `Move ${moveId}`).join(', ')
@@ -1297,6 +1399,7 @@ function renderReplacementPreview() {
     createDetailLine('Species', `${getSpeciesName(mon.ID)} (#${mon.dexID})`),
     createDetailLine('Level', String(blueprint.level)),
     createDetailLine('Experience', String(blueprint.exp)),
+    createDetailLine('Shiny', shinyLabel),
     createDetailLine('Held Item', heldItemLabel),
     createDetailLine('Abilities', abilityNames),
     createDetailLine('Moves', moveNames),
@@ -1304,7 +1407,20 @@ function renderReplacementPreview() {
     createDetailLine('Owner', `${workingSave.metadata.name || '-'} / ${workingSave.metadata.trainedId}`)
   ];
 
-  elements.replacementPreview.replaceChildren(...lines);
+  const identity = document.createElement('div');
+  identity.className = 'detail-identity';
+  identity.appendChild(createSpriteImage(
+    getSpeciesSpritePath(mon.ID, elements.shinyInput.checked),
+    `${getSpeciesName(mon.ID)} preview sprite`,
+    'detail-sprite',
+    getSpeciesSpritePath(mon.ID)
+  ));
+  const identityCopy = document.createElement('div');
+  identityCopy.className = 'detail-identity-copy';
+  identityCopy.textContent = `${getSpeciesName(mon.ID)}${elements.shinyInput.checked ? ' [Shiny]' : ''}`;
+  identity.appendChild(identityCopy);
+
+  elements.replacementPreview.replaceChildren(identity, ...lines);
 }
 
 // Builds the held-item preview for the selected Pokemon editor.
@@ -1337,7 +1453,15 @@ function renderPokemonItemPreview() {
     createDetailLine('Description', item.description || 'None')
   ];
 
-  elements.pokemonItemPreview.replaceChildren(...lines);
+  const identity = document.createElement('div');
+  identity.className = 'detail-identity';
+  identity.appendChild(createItemSprite(item.ID, 'detail-sprite item-detail-sprite'));
+  const identityCopy = document.createElement('div');
+  identityCopy.className = 'detail-identity-copy';
+  identityCopy.textContent = getItemName(item.ID);
+  identity.appendChild(identityCopy);
+
+  elements.pokemonItemPreview.replaceChildren(identity, ...lines);
 }
 
 // Builds the edited move preview for the selected existing Pokemon slot.
@@ -1369,7 +1493,7 @@ function renderReplacementMovePreview() {
     createDetailLine('Species', getSpeciesName(slot.speciesId)),
     createDetailLine('Level', String(slot.level)),
     createDetailLine('Edited Moves', selection.enteredMoveIds.length ? formatMoveNames(selection.enteredMoveIds) : 'None'),
-    createDetailLine('Legal Move Pool', `${selection.movePool.length} moves`)
+    createDetailLine('Available Move Pool', `${selection.movePool.length} moves`)
   ];
 
   elements.replacementMovePreview.replaceChildren(...lines);
@@ -1414,7 +1538,15 @@ function renderReplacementItemPreview() {
     createDetailLine('Description', item.description || 'None')
   ];
 
-  elements.replacementItemPreview.replaceChildren(...lines);
+  const identity = document.createElement('div');
+  identity.className = 'detail-identity';
+  identity.appendChild(createItemSprite(item.ID, 'detail-sprite item-detail-sprite'));
+  const identityCopy = document.createElement('div');
+  identityCopy.className = 'detail-identity-copy';
+  identityCopy.textContent = getItemName(item.ID);
+  identity.appendChild(identityCopy);
+
+  elements.replacementItemPreview.replaceChildren(identity, ...lines);
 }
 
 // Keeps button state and selected-slot labels consistent with the active UI state.
@@ -1525,9 +1657,9 @@ function handleApplySpecies() {
     const { itemId: heldItemId, item: heldItem } = resolveSelectedPokemonHeldItem();
 
     if (selectedTarget.kind === 'party') {
-      applyPartySpeciesChange(workingSave, selectedTarget.slotIndex, mon.ID, coreData, heldItemId);
+      applyPartySpeciesChange(workingSave, selectedTarget.slotIndex, mon.ID, coreData, heldItemId, elements.shinyInput.checked);
     } else {
-      applyBoxSpeciesChange(workingSave, selectedTarget.boxNumber, selectedTarget.slotIndex, mon.ID, coreData, heldItemId);
+      applyBoxSpeciesChange(workingSave, selectedTarget.boxNumber, selectedTarget.slotIndex, mon.ID, coreData, heldItemId, elements.shinyInput.checked);
       selectedBoxNumber = selectedTarget.boxNumber;
     }
 
@@ -1702,6 +1834,9 @@ elements.speciesNameInput.addEventListener('input', () => {
   renderReplacementPreview();
   syncControls();
   renderSpeciesSuggestions(elements.speciesNameInput.value);
+});
+elements.shinyInput.addEventListener('change', () => {
+  renderReplacementPreview();
 });
 elements.speciesNameInput.addEventListener('focus', () => {
   renderSpeciesSuggestions(elements.speciesNameInput.value);

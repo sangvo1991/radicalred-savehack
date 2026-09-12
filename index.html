@@ -13,8 +13,8 @@
         <p class="eyebrow">Save Hack</p>
         <h1>Radical Red Team, Box, and Item Storage Editor</h1>
         <p class="hero-copy">
-          Load a <code>.sav</code>, edit team slots, existing Pokemon moves, PC boxes, and PC item storage, then export a new save.
-          Generated Pokemon default to level 5, use your trainer ID, and respect random ability / learnset / Hardcore rules from the loaded save.
+          Load a <code>.sav</code>, edit team slots, moves, held items, PC boxes, and PC item storage, then export a new save.
+          Generated Pokemon default to level 5, can be shiny, use your trainer ID, and respect random ability / learnset / Hardcore rules from the loaded save.
         </p>
       </div>
       <div class="hero-actions">
@@ -89,6 +89,11 @@
           </div>
         </label>
 
+        <label class="toggle-field">
+          <input id="shinyInput" type="checkbox">
+          <span>Make generated Pokemon shiny</span>
+        </label>
+
         <div class="editor-actions">
           <button id="applySpeciesButton" type="button" disabled>Apply To Selected Slot</button>
         </div>
@@ -141,7 +146,7 @@
             </label>
           </div>
           <small class="field-help">
-            Existing Pokemon only. Suggestions use the selected Pokemon's legal moves at its current level with your save randomizer and Hardcore rules applied.
+            Existing Pokemon only. Suggestions include every legal move from level-up, TM/HM, tutor, egg, event, and pre-evolution sources, with your save randomizer and Hardcore rules applied.
           </small>
           <div class="editor-actions">
             <button id="applyMoveButton" type="button" disabled>Apply Moves To Selected Slot</button>

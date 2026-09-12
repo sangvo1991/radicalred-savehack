@@ -197,23 +197,17 @@ function pushEditableMoveOption(pool, byId, mon, saveMetadata, coreData, rawMove
   pool.push(detail);
 }
 
-// Builds the full editable move pool for one species at its current level and save rules.
-export function buildEditableMovePool(mon, saveMetadata, coreData, level = 100) {
+// Builds the full editable move pool for one species and save rules.
+export function buildEditableMovePool(mon, saveMetadata, coreData) {
   const pool = [];
   const byId = new Map();
 
   for (const [rawMoveId, moveLevel] of mon.levelupMoves || []) {
-    if (moveLevel > level) {
-      continue;
-    }
     pushEditableMoveOption(pool, byId, mon, saveMetadata, coreData, rawMoveId, 'Level Up', moveLevel);
   }
 
   for (const parent of getPreEvolutionLine(mon, coreData)) {
     for (const [rawMoveId, moveLevel] of parent.levelupMoves || []) {
-      if (moveLevel > level) {
-        continue;
-      }
       pushEditableMoveOption(pool, byId, mon, saveMetadata, coreData, rawMoveId, 'Pre-Evolution', moveLevel);
     }
   }
