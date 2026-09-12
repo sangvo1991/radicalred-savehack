@@ -1,9 +1,9 @@
 let cachedCoreDataPromise = null;
 
-const DATA_URL = '../data.js';
-const ABILITY_RANDOMIZER_URL = '../src/abilityRandomizer.js';
-const ADVANCED_SEARCH_URL = '../src/advancedSearch.js';
-const RANDOMIZER_METADATA_URL = '../src/randomizerMetadata.js';
+const DATA_URL = './runtime/data.js';
+const ABILITY_RANDOMIZER_URL = './runtime/abilityRandomizer.js';
+const ADVANCED_SEARCH_URL = './runtime/advancedSearch.js';
+const RANDOMIZER_METADATA_URL = './runtime/randomizerMetadata.js';
 const ABILITY_RANDOMIZER_TRUNCATE_MARKER = 'const saveFileInputElement = document.getElementById("saveFileInput");';
 
 // Normalizes species names so the editor can accept punctuation-insensitive input.

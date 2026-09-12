@@ -98,7 +98,7 @@ const MAX_SPECIES_SUGGESTIONS = 5;
 const MAX_ITEM_SUGGESTIONS = 5;
 const MAX_MOVE_SUGGESTIONS = 5;
 const PERSISTED_SAVE_STORAGE_KEY = 'rr-save-hack.persisted-save';
-const GRAPHICS_ROOT = '../graphics';
+const GRAPHICS_ROOT = 'https://raw.githubusercontent.com/sangvo1991/Radical-Red-Pokedex/feature/advanced-search-export/graphics';
 
 function getItemSuggestionContext(editorKey) {
   if (editorKey === 'pokemon') {
