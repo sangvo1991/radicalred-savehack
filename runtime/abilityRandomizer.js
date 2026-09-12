@@ -826,11 +826,11 @@ function processSaveData(data, options = {}) {
         } else if (saveData.restricted) {
             flags.push("Restricted");
         }
-    
+
         if (saveData.random.abilities) {
             flags.push("Random Abilities");
         }
-    
+
         if (saveData.random.learnset) {
             flags.push("Random Learnset");
         }
