@@ -1119,11 +1119,20 @@ function buildPokemonSlotContent(slot, emptyMessage) {
   return [visual, content];
 }
 
+// Gives unloaded storage panels a useful state instead of leaving an empty gap.
+function buildEmptyState(message) {
+  const emptyState = document.createElement('div');
+  emptyState.className = 'empty-state';
+  emptyState.textContent = message;
+  return emptyState;
+}
+
 // Rebuilds the six-slot team grid and keeps the selected slot highlighted.
 function renderPartyGrid() {
   elements.partyGrid.replaceChildren();
   if (!workingSave) {
     elements.partyCountBadge.textContent = '0 / 6 occupied';
+    elements.partyGrid.appendChild(buildEmptyState('Load a save file to view and edit your team.'));
     return;
   }
 
@@ -1186,6 +1195,7 @@ function renderBoxTabs() {
 function renderBoxGrid() {
   elements.boxGrid.replaceChildren();
   if (!workingSave) {
+    elements.boxGrid.appendChild(buildEmptyState('Load a save file to view your PC boxes.'));
     return;
   }
 
@@ -1227,6 +1237,7 @@ function renderItemGrid() {
   elements.itemGrid.replaceChildren();
   if (!workingSave) {
     elements.itemCountBadge.textContent = '0 / 30 occupied';
+    elements.itemGrid.appendChild(buildEmptyState('Load a save file to view PC item storage.'));
     return;
   }
 

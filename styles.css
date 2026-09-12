@@ -865,3 +865,57 @@ button,
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* Keep the desktop composition balanced without changing the compact mobile flow. */
+.empty-state {
+  grid-column: 1 / -1;
+  display: grid;
+  min-height: 112px;
+  place-items: center;
+  padding: 1.25rem;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  color: var(--text-faint);
+  text-align: center;
+}
+
+@media (min-width: 1121px) {
+  .layout {
+    width: min(1400px, calc(100vw - 64px));
+  }
+
+  .hero {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 28px;
+  }
+
+  .hero-copy {
+    max-width: 860px;
+  }
+
+  .hero-actions {
+    justify-content: flex-end;
+    padding-bottom: 12px;
+  }
+
+  .workspace {
+    grid-template-columns: minmax(0, 1fr) minmax(380px, 430px);
+    gap: 20px;
+  }
+
+  .party-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .box-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .empty-state {
+    min-height: 96px;
+  }
+}
