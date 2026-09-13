@@ -32,7 +32,12 @@ const elements = {
   applySpeciesButton: document.getElementById('applySpeciesButton'),
   speciesNameInput: document.getElementById('speciesNameInput'),
   speciesSuggestionList: document.getElementById('speciesSuggestionList'),
-  statusBanner: document.getElementById('statusBanner'),
+  notificationBellButton: document.getElementById('notificationBellButton'),
+  notificationCount: document.getElementById('notificationCount'),
+  notificationPanel: document.getElementById('notificationPanel'),
+  clearNotificationsButton: document.getElementById('clearNotificationsButton'),
+  notificationList: document.getElementById('notificationList'),
+  notificationToasts: document.getElementById('notificationToasts'),
   trainerName: document.getElementById('trainerName'),
   trainerId: document.getElementById('trainerId'),
   saveFlags: document.getElementById('saveFlags'),
@@ -102,7 +107,12 @@ const MAX_MOVE_SUGGESTIONS = 5;
 const PERSISTED_SAVE_STORAGE_KEY = 'rr-save-hack.persisted-save';
 const FAVORITES_STORAGE_KEY = 'favoriteSpeciesIds';
 const LEGACY_FAVORITES_STORAGE_KEY = 'teamBuilderSpeciesIds';
+const NOTIFICATION_LIMIT = 5;
+const NOTIFICATION_FADE_MS = 1500;
+const NOTIFICATION_VISIBLE_MS = 4500;
 const GRAPHICS_ROOT = 'https://raw.githubusercontent.com/sangvo1991/Radical-Red-Pokedex/feature/advanced-search-export/graphics';
+let notifications = [];
+let nextNotificationId = 1;
 
 function getItemSuggestionContext(editorKey) {
   if (editorKey === 'pokemon') {
@@ -122,10 +132,68 @@ function getItemSuggestionContext(editorKey) {
   };
 }
 
-// Updates the shared status banner so file-load and export steps stay obvious.
+// Renders the five most recent notifications in the bell popover.
+function renderNotifications() {
+  elements.notificationCount.textContent = String(notifications.length);
+  elements.notificationCount.hidden = notifications.length === 0;
+  elements.notificationList.replaceChildren();
+
+  if (!notifications.length) {
+    const emptyState = document.createElement('p');
+    emptyState.className = 'notification-empty-state';
+    emptyState.textContent = 'No notifications.';
+    elements.notificationList.appendChild(emptyState);
+    return;
+  }
+
+  notifications.forEach(notification => {
+    const item = document.createElement('article');
+    item.className = `notification-item ${notification.tone}`;
+
+    const message = document.createElement('p');
+    message.textContent = notification.message;
+
+    const time = document.createElement('time');
+    time.dateTime = notification.timestamp.toISOString();
+    time.textContent = notification.timestamp.toLocaleTimeString([], {
+      hour: 'numeric',
+      minute: '2-digit'
+    });
+
+    item.replaceChildren(message, time);
+    elements.notificationList.appendChild(item);
+  });
+}
+
+// Shows one temporary top-left toast for the latest status event.
+function showNotificationToast(notification) {
+  while (elements.notificationToasts.children.length >= NOTIFICATION_LIMIT) {
+    elements.notificationToasts.firstElementChild.remove();
+  }
+
+  const toast = document.createElement('article');
+  toast.className = `notification-toast ${notification.tone}`;
+  toast.textContent = notification.message;
+  elements.notificationToasts.appendChild(toast);
+
+  window.setTimeout(() => {
+    toast.classList.add('is-leaving');
+    window.setTimeout(() => toast.remove(), NOTIFICATION_FADE_MS);
+  }, NOTIFICATION_VISIBLE_MS);
+}
+
+// Adds a status event to the capped history and displays its temporary toast.
 function setStatus(message, tone = 'info') {
-  elements.statusBanner.textContent = message;
-  elements.statusBanner.className = `status-banner ${tone}`;
+  const notification = {
+    id: nextNotificationId,
+    message,
+    tone,
+    timestamp: new Date()
+  };
+  nextNotificationId += 1;
+  notifications = [notification, ...notifications].slice(0, NOTIFICATION_LIMIT);
+  renderNotifications();
+  showNotificationToast(notification);
 }
 
 // Reads the shared favorites list written by the Radical Red Pokedex page.
@@ -1945,6 +2013,28 @@ elements.applyPokemonItemButton.addEventListener('click', handleApplyPokemonItem
 elements.applyMoveButton.addEventListener('click', handleApplyMoves);
 elements.applyItemButton.addEventListener('click', handleApplyItem);
 elements.exportSaveButton.addEventListener('click', handleExport);
+elements.notificationBellButton.addEventListener('click', () => {
+  const isOpen = elements.notificationPanel.hidden;
+  elements.notificationPanel.hidden = !isOpen;
+  elements.notificationBellButton.setAttribute('aria-expanded', String(isOpen));
+});
+elements.clearNotificationsButton.addEventListener('click', () => {
+  notifications = [];
+  elements.notificationToasts.replaceChildren();
+  renderNotifications();
+});
+document.addEventListener('click', event => {
+  if (!event.target.closest('.notification-center')) {
+    elements.notificationPanel.hidden = true;
+    elements.notificationBellButton.setAttribute('aria-expanded', 'false');
+  }
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') {
+    elements.notificationPanel.hidden = true;
+    elements.notificationBellButton.setAttribute('aria-expanded', 'false');
+  }
+});
 elements.speciesNameInput.addEventListener('input', () => {
   renderReplacementPreview();
   syncControls();
@@ -2104,4 +2194,5 @@ elements.itemSuggestionList.addEventListener('mouseleave', () => scheduleItemSug
 elements.pokemonItemSuggestionList.addEventListener('mouseenter', () => clearItemSuggestionHideTimer('pokemon'));
 elements.pokemonItemSuggestionList.addEventListener('mouseleave', () => scheduleItemSuggestionHide('pokemon'));
 
+renderNotifications();
 start();
