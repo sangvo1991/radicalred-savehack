@@ -19,6 +19,7 @@ import {
   applyPartyMoveChange,
   applyPartyHeldItemChange,
   applyPartySpeciesChange,
+  applyBoxSpeciesBatchChange,
   buildOutputFileName,
   exportEditedSave,
   formatSaveFlags,
@@ -39,6 +40,7 @@ const elements = {
   progressionSummary: document.getElementById('progressionSummary'),
   partyCountBadge: document.getElementById('partyCountBadge'),
   boxCountBadge: document.getElementById('boxCountBadge'),
+  importFavoritesButton: document.getElementById('importFavoritesButton'),
   partyGrid: document.getElementById('partyGrid'),
   boxTabs: document.getElementById('boxTabs'),
   boxGrid: document.getElementById('boxGrid'),
@@ -98,6 +100,8 @@ const MAX_SPECIES_SUGGESTIONS = 5;
 const MAX_ITEM_SUGGESTIONS = 5;
 const MAX_MOVE_SUGGESTIONS = 5;
 const PERSISTED_SAVE_STORAGE_KEY = 'rr-save-hack.persisted-save';
+const FAVORITES_STORAGE_KEY = 'favoriteSpeciesIds';
+const LEGACY_FAVORITES_STORAGE_KEY = 'teamBuilderSpeciesIds';
 const GRAPHICS_ROOT = 'https://raw.githubusercontent.com/sangvo1991/Radical-Red-Pokedex/feature/advanced-search-export/graphics';
 
 function getItemSuggestionContext(editorKey) {
@@ -122,6 +126,45 @@ function getItemSuggestionContext(editorKey) {
 function setStatus(message, tone = 'info') {
   elements.statusBanner.textContent = message;
   elements.statusBanner.className = `status-banner ${tone}`;
+}
+
+// Reads the shared favorites list written by the Radical Red Pokedex page.
+function readFavoriteSpeciesIds() {
+  let rawFavorites;
+  try {
+    rawFavorites = localStorage.getItem(FAVORITES_STORAGE_KEY)
+      || localStorage.getItem(LEGACY_FAVORITES_STORAGE_KEY);
+  } catch (error) {
+    throw new Error('Unable to read Pokedex favorites from browser storage.');
+  }
+
+  if (!rawFavorites) {
+    return [];
+  }
+
+  let parsedFavorites;
+  try {
+    parsedFavorites = JSON.parse(rawFavorites);
+  } catch (error) {
+    throw new Error('The saved Pokedex favorites list is not valid JSON.');
+  }
+
+  if (!Array.isArray(parsedFavorites)) {
+    throw new Error('The saved Pokedex favorites list is invalid.');
+  }
+
+  const speciesIds = [];
+  for (const value of parsedFavorites) {
+    const speciesId = Number(value);
+    if (!Number.isInteger(speciesId) || !coreData?.species?.[speciesId]) {
+      throw new Error(`Favorite Pokemon ID ${value} is not available in this dex data.`);
+    }
+    if (!speciesIds.includes(speciesId)) {
+      speciesIds.push(speciesId);
+    }
+  }
+
+  return speciesIds;
 }
 
 // Encodes one save buffer into base64 so the current edited save fits in localStorage cleanly.
@@ -1083,6 +1126,56 @@ function renderMetadata() {
   elements.progressionSummary.textContent = workingSave.metadata.progression?.summary || 'Unknown';
 }
 
+// Imports every shared favorite into consecutive empty slots in the selected PC box.
+function handleImportFavorites() {
+  try {
+    if (!workingSave) {
+      throw new Error('Load a save file before importing favorites.');
+    }
+    if (!selectedTarget || selectedTarget.kind !== 'box') {
+      throw new Error('Select an empty slot in a PC box before importing favorites.');
+    }
+
+    const speciesIds = readFavoriteSpeciesIds();
+    if (!speciesIds.length) {
+      throw new Error('No favorite Pokemon were found in the Radical Red Pokedex.');
+    }
+
+    const remainingSlots = BOX_CAPACITY - selectedTarget.slotIndex;
+    if (speciesIds.length > remainingSlots) {
+      throw new Error(
+        `Import cancelled: ${speciesIds.length} favorites need ${speciesIds.length} empty slots, `
+        + `but only ${remainingSlots} remain in Box ${selectedTarget.boxNumber}.`
+      );
+    }
+
+    const box = workingSave.boxes[selectedTarget.boxNumber - 1];
+    const destinationSlots = speciesIds.map((_, offset) => box?.slots?.[selectedTarget.slotIndex + offset]);
+    if (destinationSlots.some(slot => !slot || slot.present)) {
+      throw new Error('Import cancelled: every destination box slot must be empty.');
+    }
+
+    applyBoxSpeciesBatchChange(
+      workingSave,
+      selectedTarget.boxNumber,
+      selectedTarget.slotIndex,
+      speciesIds,
+      coreData,
+      elements.shinyInput.checked
+    );
+    hydratePokemonItemEditorFromSelectedSlot();
+    hydrateMoveEditorFromSelectedSlot();
+    renderAll();
+    persistWorkingSave();
+    setStatus(
+      `Imported ${speciesIds.length} favorite Pokemon into Box ${selectedTarget.boxNumber}, starting at slot ${selectedTarget.slotIndex + 1}.`,
+      'success'
+    );
+  } catch (error) {
+    setStatus(error.message || 'Unable to import favorite Pokemon.', 'error');
+  }
+}
+
 // Builds the compact visual used by party and box slots on both desktop and mobile.
 function buildPokemonSlotContent(slot, emptyMessage) {
   const visual = document.createElement('div');
@@ -1596,6 +1689,16 @@ function syncControls() {
     && (itemQuantity === 0 || (itemMatch && itemQuantity > 0))
   );
   elements.applyItemButton.disabled = !canApplyItem;
+  let favoriteCount = 0;
+  try {
+    favoriteCount = readFavoriteSpeciesIds().length;
+  } catch (error) {
+    favoriteCount = 0;
+  }
+  elements.importFavoritesButton.textContent = favoriteCount
+    ? `Import ${favoriteCount} Favorites`
+    : 'Import Favorites';
+  elements.importFavoritesButton.disabled = !workingSave;
   elements.selectedTargetLabel.textContent = workingSave ? formatTargetLabel(selectedTarget) : 'No slot selected';
   elements.selectedCurrentPokemon.textContent = selectedSlot?.present ? getSpeciesName(selectedSlot.speciesId) : (workingSave ? 'Empty' : '-');
   elements.selectedItemTargetLabel.textContent = workingSave ? formatItemTargetLabel(selectedItemSlotIndex) : 'No item slot selected';
@@ -1837,6 +1940,7 @@ async function start() {
 
 elements.saveFileInput.addEventListener('change', handleSaveUpload);
 elements.applySpeciesButton.addEventListener('click', handleApplySpecies);
+elements.importFavoritesButton.addEventListener('click', handleImportFavorites);
 elements.applyPokemonItemButton.addEventListener('click', handleApplyPokemonItem);
 elements.applyMoveButton.addEventListener('click', handleApplyMoves);
 elements.applyItemButton.addEventListener('click', handleApplyItem);

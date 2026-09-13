@@ -222,6 +222,14 @@ button:disabled {
   margin-bottom: 12px;
 }
 
+.panel-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .badge {
   display: inline-flex;
   align-items: center;
@@ -1021,5 +1029,10 @@ button,
 
   .box-tabs {
     max-width: 100%;
+  }
+
+  .panel-header-actions {
+    width: 100%;
+    justify-content: space-between;
   }
 }

@@ -1024,6 +1024,43 @@ export function applyBoxSpeciesChange(state, boxNumber, slotIndex, speciesId, co
   hydrateSaveState(state, coreData);
 }
 
+// Applies a consecutive box import only after every destination has passed validation.
+export function applyBoxSpeciesBatchChange(state, boxNumber, startSlotIndex, speciesIds, coreData, shiny = false) {
+  if (!Array.isArray(speciesIds) || speciesIds.length === 0) {
+    throw new Error('No favorite Pokemon were provided for import.');
+  }
+  if (!Number.isInteger(boxNumber) || boxNumber < 1 || boxNumber > BOX_COUNT) {
+    throw new Error(`Unsupported box ${boxNumber}.`);
+  }
+  if (!Number.isInteger(startSlotIndex) || startSlotIndex < 0 || startSlotIndex >= BOX_CAPACITY) {
+    throw new Error(`Unsupported box slot ${startSlotIndex}.`);
+  }
+  if (startSlotIndex + speciesIds.length > BOX_CAPACITY) {
+    throw new Error('The selected box slot does not have enough room for all favorite Pokemon.');
+  }
+
+  const box = state.boxes?.[boxNumber - 1];
+  if (!box) {
+    throw new Error(`Unable to find box ${boxNumber}.`);
+  }
+
+  const targetSlots = speciesIds.map((_, offset) => box.slots?.[startSlotIndex + offset]);
+  if (targetSlots.some(slot => !slot || slot.present)) {
+    throw new Error('Import cancelled: every destination box slot must be empty.');
+  }
+
+  // Build every entry before writing any buffer so a generation error leaves the save untouched.
+  const entries = speciesIds.map((speciesId, offset) =>
+    buildBoxEntry(speciesId, boxNumber, startSlotIndex + offset, state, coreData, 0, shiny)
+  );
+
+  entries.forEach((entryBytes, offset) => {
+    const { storageKey, entryOffset } = getBoxSlotLocation(boxNumber, startSlotIndex + offset);
+    getStateBuffer(state, storageKey).set(entryBytes, entryOffset);
+  });
+  hydrateSaveState(state, coreData);
+}
+
 // Builds a downloadable edited save file while preserving untouched sectors and footers.
 export function exportEditedSave(state) {
   const outputBytes = new Uint8Array(state.fileBytes);
