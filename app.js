@@ -33,9 +33,11 @@ const elements = {
   speciesNameInput: document.getElementById('speciesNameInput'),
   speciesSuggestionList: document.getElementById('speciesSuggestionList'),
   notificationBellButton: document.getElementById('notificationBellButton'),
-  notificationCount: document.getElementById('notificationCount'),
   notificationPanel: document.getElementById('notificationPanel'),
   clearNotificationsButton: document.getElementById('clearNotificationsButton'),
+  decreaseNotificationDuration: document.getElementById('decreaseNotificationDuration'),
+  notificationDurationInput: document.getElementById('notificationDurationInput'),
+  increaseNotificationDuration: document.getElementById('increaseNotificationDuration'),
   notificationList: document.getElementById('notificationList'),
   notificationToasts: document.getElementById('notificationToasts'),
   trainerName: document.getElementById('trainerName'),
@@ -109,10 +111,13 @@ const FAVORITES_STORAGE_KEY = 'favoriteSpeciesIds';
 const LEGACY_FAVORITES_STORAGE_KEY = 'teamBuilderSpeciesIds';
 const NOTIFICATION_LIMIT = 5;
 const NOTIFICATION_FADE_MS = 1500;
-const NOTIFICATION_VISIBLE_MS = 4500;
+const NOTIFICATION_MIN_SECONDS = 0;
+const NOTIFICATION_MAX_SECONDS = 5;
+const NOTIFICATION_STEP_SECONDS = 0.5;
 const GRAPHICS_ROOT = 'https://raw.githubusercontent.com/sangvo1991/Radical-Red-Pokedex/feature/advanced-search-export/graphics';
 let notifications = [];
 let nextNotificationId = 1;
+let notificationDurationSeconds = 1;
 
 function getItemSuggestionContext(editorKey) {
   if (editorKey === 'pokemon') {
@@ -134,8 +139,6 @@ function getItemSuggestionContext(editorKey) {
 
 // Renders the five most recent notifications in the bell popover.
 function renderNotifications() {
-  elements.notificationCount.textContent = String(notifications.length);
-  elements.notificationCount.hidden = notifications.length === 0;
   elements.notificationList.replaceChildren();
 
   if (!notifications.length) {
@@ -165,8 +168,32 @@ function renderNotifications() {
   });
 }
 
+// Clamps a user-entered toast duration to the supported half-second range.
+function normalizeNotificationDuration(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return notificationDurationSeconds;
+  }
+
+  const stepped = Math.round(parsed / NOTIFICATION_STEP_SECONDS) * NOTIFICATION_STEP_SECONDS;
+  return Math.min(NOTIFICATION_MAX_SECONDS, Math.max(NOTIFICATION_MIN_SECONDS, stepped));
+}
+
+// Applies the toast duration input and immediately hides active toasts when set to zero.
+function setNotificationDuration(value) {
+  notificationDurationSeconds = normalizeNotificationDuration(value);
+  elements.notificationDurationInput.value = String(notificationDurationSeconds);
+  if (notificationDurationSeconds === 0) {
+    elements.notificationToasts.replaceChildren();
+  }
+}
+
 // Shows one temporary top-left toast for the latest status event.
 function showNotificationToast(notification) {
+  if (notificationDurationSeconds <= NOTIFICATION_MIN_SECONDS) {
+    return;
+  }
+
   while (elements.notificationToasts.children.length >= NOTIFICATION_LIMIT) {
     elements.notificationToasts.firstElementChild.remove();
   }
@@ -179,7 +206,7 @@ function showNotificationToast(notification) {
   window.setTimeout(() => {
     toast.classList.add('is-leaving');
     window.setTimeout(() => toast.remove(), NOTIFICATION_FADE_MS);
-  }, NOTIFICATION_VISIBLE_MS);
+  }, notificationDurationSeconds * 1000 + NOTIFICATION_FADE_MS);
 }
 
 // Adds a status event to the capped history and displays its temporary toast.
@@ -2022,6 +2049,24 @@ elements.clearNotificationsButton.addEventListener('click', () => {
   notifications = [];
   elements.notificationToasts.replaceChildren();
   renderNotifications();
+});
+elements.decreaseNotificationDuration.addEventListener('click', () => {
+  setNotificationDuration(notificationDurationSeconds - NOTIFICATION_STEP_SECONDS);
+});
+elements.increaseNotificationDuration.addEventListener('click', () => {
+  setNotificationDuration(notificationDurationSeconds + NOTIFICATION_STEP_SECONDS);
+});
+elements.notificationDurationInput.addEventListener('input', event => {
+  const value = Number(event.target.value);
+  if (Number.isFinite(value)) {
+    notificationDurationSeconds = normalizeNotificationDuration(value);
+    if (notificationDurationSeconds === NOTIFICATION_MIN_SECONDS) {
+      elements.notificationToasts.replaceChildren();
+    }
+  }
+});
+elements.notificationDurationInput.addEventListener('change', event => {
+  setNotificationDuration(event.target.value);
 });
 document.addEventListener('click', event => {
   if (!event.target.closest('.notification-center')) {

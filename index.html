@@ -12,11 +12,16 @@
       <svg class="notification-bell-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
         <path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9m-8.5 12h5" />
       </svg>
-      <span id="notificationCount" class="notification-count" hidden>0</span>
     </button>
     <section id="notificationPanel" class="notification-panel" hidden aria-label="Notifications">
       <div class="notification-panel-header">
         <h2>Notifications</h2>
+        <div class="notification-duration-control">
+          <button id="decreaseNotificationDuration" class="notification-duration-button" type="button" aria-label="Decrease notification display time">-</button>
+          <input id="notificationDurationInput" class="notification-duration-input" type="number" min="0" max="5" step="0.5" value="1" inputmode="decimal" aria-label="Notification display seconds">
+          <span class="notification-duration-unit">s</span>
+          <button id="increaseNotificationDuration" class="notification-duration-button" type="button" aria-label="Increase notification display time">+</button>
+        </div>
         <button id="clearNotificationsButton" class="notification-clear-button" type="button">Clear all</button>
       </div>
       <div id="notificationList" class="notification-list" aria-live="polite"></div>
