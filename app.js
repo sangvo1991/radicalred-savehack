@@ -1161,7 +1161,7 @@ function handleImportFavorites() {
       selectedTarget.slotIndex,
       speciesIds,
       coreData,
-      elements.shinyInput.checked
+      false
     );
     hydratePokemonItemEditorFromSelectedSlot();
     hydrateMoveEditorFromSelectedSlot();
