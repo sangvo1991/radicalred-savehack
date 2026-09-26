@@ -923,7 +923,7 @@ function hydrateMoveEditorFromSelectedSlot() {
 // Scores one legal move suggestion against the active text query.
 function scoreMoveSuggestionMatch(suggestion, normalizedQuery) {
   if (!normalizedQuery) {
-    return null;
+    return 3;
   }
 
   if (suggestion.normalizedLabel === normalizedQuery) {
@@ -942,10 +942,6 @@ function scoreMoveSuggestionMatch(suggestion, normalizedQuery) {
 // Builds at most five ranked legal move suggestions for one active move editor field.
 function buildMoveSuggestionMatches(query) {
   const normalizedQuery = normalizeMoveLookupKey(query);
-  if (!normalizedQuery) {
-    return [];
-  }
-
   return buildSelectedSlotMovePool()
     .map(suggestion => ({
       suggestion,
