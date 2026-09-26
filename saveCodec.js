@@ -1061,6 +1061,92 @@ export function applyBoxSpeciesBatchChange(state, boxNumber, startSlotIndex, spe
   hydrateSaveState(state, coreData);
 }
 
+// Deletes one party Pokemon and compacts later party entries into the open slot.
+export function deletePartyPokemon(state, slotIndex, coreData) {
+  const slot = state.partySlots?.[slotIndex];
+  if (!slot?.present) {
+    throw new Error('Select an existing party Pokemon to delete.');
+  }
+
+  const snapshot = {
+    kind: 'party',
+    partyCount: state.saveBlock1[PARTY_COUNT_SAVE_BLOCK1_OFFSET] || 0,
+    entries: state.partySlots.map(existingSlot => new Uint8Array(existingSlot.rawBytes)),
+    speciesId: slot.speciesId
+  };
+  const remainingEntries = state.partySlots
+    .filter(existingSlot => existingSlot.present && existingSlot.slotIndex !== slotIndex)
+    .map(existingSlot => existingSlot.rawBytes);
+
+  for (let index = 0; index < PARTY_POKEMON_CAPACITY; index += 1) {
+    const entryOffset = PARTY_POKEMON_SAVE_BLOCK1_OFFSET + index * PARTY_POKEMON_SIZE;
+    const entryBytes = remainingEntries[index] || new Uint8Array(PARTY_POKEMON_SIZE);
+    state.saveBlock1.set(entryBytes, entryOffset);
+  }
+  state.saveBlock1[PARTY_COUNT_SAVE_BLOCK1_OFFSET] = remainingEntries.length;
+  hydrateSaveState(state, coreData);
+  return snapshot;
+}
+
+// Deletes one boxed Pokemon while retaining its exact bytes for a later undo.
+export function deleteBoxPokemon(state, boxNumber, slotIndex, coreData) {
+  const slot = state.boxes?.[boxNumber - 1]?.slots?.[slotIndex];
+  if (!slot?.present) {
+    throw new Error('Select an existing box Pokemon to delete.');
+  }
+
+  const { storageKey, entryOffset } = getBoxSlotLocation(boxNumber, slotIndex);
+  const buffer = getStateBuffer(state, storageKey);
+  const snapshot = {
+    kind: 'box',
+    boxNumber,
+    slotIndex,
+    rawBytes: new Uint8Array(slot.rawBytes),
+    speciesId: slot.speciesId
+  };
+  buffer.fill(0, entryOffset, entryOffset + BOX_POKEMON_SIZE);
+  hydrateSaveState(state, coreData);
+  return snapshot;
+}
+
+// Restores the most recently deleted party or box Pokemon from its undo snapshot.
+export function restoreDeletedPokemon(state, snapshot, coreData) {
+  if (!snapshot?.kind) {
+    throw new Error('There is no deleted Pokemon to restore.');
+  }
+
+  if (snapshot.kind === 'party') {
+    if (!Array.isArray(snapshot.entries) || snapshot.entries.length !== PARTY_POKEMON_CAPACITY) {
+      throw new Error('The deleted party Pokemon snapshot is invalid.');
+    }
+    snapshot.entries.forEach((entryBytes, index) => {
+      if (!(entryBytes instanceof Uint8Array) || entryBytes.length !== PARTY_POKEMON_SIZE) {
+        throw new Error('The deleted party Pokemon snapshot is invalid.');
+      }
+      const entryOffset = PARTY_POKEMON_SAVE_BLOCK1_OFFSET + index * PARTY_POKEMON_SIZE;
+      state.saveBlock1.set(entryBytes, entryOffset);
+    });
+    state.saveBlock1[PARTY_COUNT_SAVE_BLOCK1_OFFSET] = Math.min(
+      PARTY_POKEMON_CAPACITY,
+      Math.max(0, Number(snapshot.partyCount) || 0)
+    );
+    hydrateSaveState(state, coreData);
+    return;
+  }
+
+  if (snapshot.kind === 'box') {
+    if (!(snapshot.rawBytes instanceof Uint8Array) || snapshot.rawBytes.length !== BOX_POKEMON_SIZE) {
+      throw new Error('The deleted box Pokemon snapshot is invalid.');
+    }
+    const { storageKey, entryOffset } = getBoxSlotLocation(snapshot.boxNumber, snapshot.slotIndex);
+    getStateBuffer(state, storageKey).set(snapshot.rawBytes, entryOffset);
+    hydrateSaveState(state, coreData);
+    return;
+  }
+
+  throw new Error('Unsupported deleted Pokemon snapshot.');
+}
+
 // Builds a downloadable edited save file while preserving untouched sectors and footers.
 export function exportEditedSave(state) {
   const outputBytes = new Uint8Array(state.fileBytes);

@@ -20,6 +20,9 @@ import {
   applyPartyHeldItemChange,
   applyPartySpeciesChange,
   applyBoxSpeciesBatchChange,
+  deletePartyPokemon,
+  deleteBoxPokemon,
+  restoreDeletedPokemon,
   buildOutputFileName,
   exportEditedSave,
   formatSaveFlags,
@@ -32,6 +35,8 @@ const elements = {
   applySpeciesButton: document.getElementById('applySpeciesButton'),
   speciesNameInput: document.getElementById('speciesNameInput'),
   speciesSuggestionList: document.getElementById('speciesSuggestionList'),
+  deletePokemonButton: document.getElementById('deletePokemonButton'),
+  restoreDeletedPokemonButton: document.getElementById('restoreDeletedPokemonButton'),
   notificationBellButton: document.getElementById('notificationBellButton'),
   notificationPanel: document.getElementById('notificationPanel'),
   clearNotificationsButton: document.getElementById('clearNotificationsButton'),
@@ -118,6 +123,7 @@ const GRAPHICS_ROOT = 'https://raw.githubusercontent.com/sangvo1991/Radical-Red-
 let notifications = [];
 let nextNotificationId = 1;
 let notificationDurationSeconds = 1;
+let lastDeletedPokemon = null;
 
 function getItemSuggestionContext(editorKey) {
   if (editorKey === 'pokemon') {
@@ -1196,6 +1202,11 @@ function resetPokemonReplacementEditor() {
   hideSpeciesSuggestions();
 }
 
+// Invalidates the one-step delete undo after another save mutation succeeds.
+function clearDeletedPokemonUndo() {
+  lastDeletedPokemon = null;
+}
+
 // Loads the currently selected item slot values into the editor inputs.
 function hydrateItemEditorFromSelectedSlot() {
   const slot = getSelectedItemSlot();
@@ -1265,6 +1276,7 @@ function handleImportFavorites() {
       coreData,
       false
     );
+    clearDeletedPokemonUndo();
     hydratePokemonItemEditorFromSelectedSlot();
     hydrateMoveEditorFromSelectedSlot();
     renderAll();
@@ -1793,6 +1805,12 @@ function syncControls() {
     && (itemQuantity === 0 || (itemMatch && itemQuantity > 0))
   );
   elements.applyItemButton.disabled = !canApplyItem;
+  elements.deletePokemonButton.disabled = !Boolean(
+    workingSave
+    && selectedTarget
+    && selectedSlot?.present
+  );
+  elements.restoreDeletedPokemonButton.disabled = !Boolean(workingSave && lastDeletedPokemon);
   let favoriteCount = 0;
   try {
     favoriteCount = readFavoriteSpeciesIds().length;
@@ -1840,6 +1858,7 @@ async function handleSaveUpload(event) {
     selectedBoxNumber = 1;
     selectedTarget = { kind: 'party', slotIndex: 0 };
     selectedItemSlotIndex = 0;
+    clearDeletedPokemonUndo();
     resetPokemonReplacementEditor();
     hydrateMoveEditorFromSelectedSlot();
     hydratePokemonItemEditorFromSelectedSlot();
@@ -1851,6 +1870,7 @@ async function handleSaveUpload(event) {
     workingSave = null;
     selectedTarget = null;
     selectedItemSlotIndex = 0;
+    clearDeletedPokemonUndo();
     resetPokemonReplacementEditor();
     hydrateMoveEditorFromSelectedSlot();
     hydratePokemonItemEditorFromSelectedSlot();
@@ -1858,6 +1878,69 @@ async function handleSaveUpload(event) {
     renderAll();
     clearPersistedSave();
     setStatus(error.message || 'Unable to read that save file.', 'error');
+  }
+}
+
+// Deletes the selected party or box Pokemon and stores one undo snapshot.
+function handleDeletePokemon() {
+  if (!workingSave || !selectedTarget) {
+    return;
+  }
+
+  const slot = getSelectedSlot();
+  if (!slot?.present) {
+    setStatus('Select an existing Pokemon before deleting it.', 'error');
+    return;
+  }
+
+  const target = { ...selectedTarget };
+  const speciesName = getSpeciesName(slot.speciesId);
+
+  try {
+    const snapshot = target.kind === 'party'
+      ? deletePartyPokemon(workingSave, target.slotIndex, coreData)
+      : deleteBoxPokemon(workingSave, target.boxNumber, target.slotIndex, coreData);
+    lastDeletedPokemon = { ...snapshot, target };
+    if (target.kind === 'box') {
+      selectedBoxNumber = target.boxNumber;
+    }
+    resetPokemonReplacementEditor();
+    hydrateMoveEditorFromSelectedSlot();
+    hydratePokemonItemEditorFromSelectedSlot();
+    renderAll();
+    persistWorkingSave();
+    setStatus(`Deleted ${speciesName} from ${formatTargetLabel(target)}. Use Restore Last Deleted Pokemon to undo.`, 'success');
+  } catch (error) {
+    setStatus(error.message || 'Unable to delete that Pokemon.', 'error');
+  }
+}
+
+// Restores the most recent deleted Pokemon if no later save mutation replaced the undo state.
+function handleRestoreDeletedPokemon() {
+  if (!workingSave || !lastDeletedPokemon) {
+    setStatus('There is no deleted Pokemon to restore.', 'error');
+    return;
+  }
+
+  const snapshot = lastDeletedPokemon;
+  const target = snapshot.target;
+  const speciesName = getSpeciesName(snapshot.speciesId);
+
+  try {
+    restoreDeletedPokemon(workingSave, snapshot, coreData);
+    selectedTarget = { ...target };
+    if (target.kind === 'box') {
+      selectedBoxNumber = target.boxNumber;
+    }
+    lastDeletedPokemon = null;
+    resetPokemonReplacementEditor();
+    hydrateMoveEditorFromSelectedSlot();
+    hydratePokemonItemEditorFromSelectedSlot();
+    renderAll();
+    persistWorkingSave();
+    setStatus(`Restored ${speciesName} to ${formatTargetLabel(target)}.`, 'success');
+  } catch (error) {
+    setStatus(error.message || 'Unable to restore that Pokemon.', 'error');
   }
 }
 
@@ -1883,6 +1966,7 @@ function handleApplySpecies() {
       selectedBoxNumber = selectedTarget.boxNumber;
     }
 
+    clearDeletedPokemonUndo();
     hydrateMoveEditorFromSelectedSlot();
     hydratePokemonItemEditorFromSelectedSlot();
     renderAll();
@@ -1918,6 +2002,7 @@ function handleApplyPokemonItem() {
       selectedBoxNumber = selectedTarget.boxNumber;
     }
 
+    clearDeletedPokemonUndo();
     hydratePokemonItemEditorFromSelectedSlot();
     renderAll();
     persistWorkingSave();
@@ -1958,6 +2043,7 @@ function handleApplyMoves() {
       selectedBoxNumber = selectedTarget.boxNumber;
     }
 
+    clearDeletedPokemonUndo();
     hydrateMoveEditorFromSelectedSlot();
     renderAll();
     persistWorkingSave();
@@ -1978,6 +2064,7 @@ function handleApplyItem() {
   try {
     if (quantity === 0) {
       applyPcItemChange(workingSave, selectedItemSlotIndex, 0, 0, coreData);
+      clearDeletedPokemonUndo();
       hydrateItemEditorFromSelectedSlot();
       renderAll();
       persistWorkingSave();
@@ -1992,6 +2079,7 @@ function handleApplyItem() {
     }
 
     applyPcItemChange(workingSave, selectedItemSlotIndex, item.ID, quantity, coreData);
+    clearDeletedPokemonUndo();
     hydrateItemEditorFromSelectedSlot();
     renderAll();
     persistWorkingSave();
@@ -2046,6 +2134,8 @@ async function start() {
 
 elements.saveFileInput.addEventListener('change', handleSaveUpload);
 elements.applySpeciesButton.addEventListener('click', handleApplySpecies);
+elements.deletePokemonButton.addEventListener('click', handleDeletePokemon);
+elements.restoreDeletedPokemonButton.addEventListener('click', handleRestoreDeletedPokemon);
 elements.importFavoritesButton.addEventListener('click', handleImportFavorites);
 elements.applyPokemonItemButton.addEventListener('click', handleApplyPokemonItem);
 elements.applyMoveButton.addEventListener('click', handleApplyMoves);

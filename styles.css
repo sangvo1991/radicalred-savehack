@@ -929,6 +929,21 @@ button,
   flex: 1 1 210px;
 }
 
+.pokemon-delete-actions {
+  margin-top: -4px;
+}
+
+.pokemon-delete-actions button:first-child {
+  border-color: rgba(255, 178, 178, 0.58);
+  color: var(--error);
+}
+
+.pokemon-delete-actions button:first-child:hover,
+.pokemon-delete-actions button:first-child:focus-visible {
+  background: rgba(255, 178, 178, 0.1);
+  border-color: var(--error);
+}
+
 .detail-identity {
   display: flex;
   align-items: center;
