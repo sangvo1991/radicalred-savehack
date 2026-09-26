@@ -1189,6 +1189,13 @@ function hydratePokemonItemEditorFromSelectedSlot() {
   hideItemSuggestions('pokemon');
 }
 
+// Clears replacement-only inputs when the user targets a different Pokemon slot.
+function resetPokemonReplacementEditor() {
+  elements.speciesNameInput.value = '';
+  elements.shinyInput.checked = false;
+  hideSpeciesSuggestions();
+}
+
 // Loads the currently selected item slot values into the editor inputs.
 function hydrateItemEditorFromSelectedSlot() {
   const slot = getSelectedItemSlot();
@@ -1338,6 +1345,7 @@ function renderPartyGrid() {
     button.replaceChildren(...buildPokemonSlotContent(slot, 'Click to target this empty team slot.'));
     button.addEventListener('click', () => {
       selectedTarget = { kind: 'party', slotIndex: slot.slotIndex };
+      resetPokemonReplacementEditor();
       hydrateMoveEditorFromSelectedSlot();
       hydratePokemonItemEditorFromSelectedSlot();
       persistWorkingSave();
@@ -1411,6 +1419,7 @@ function renderBoxGrid() {
         boxNumber: currentBox.boxNumber,
         slotIndex: slot.slotIndex
       };
+      resetPokemonReplacementEditor();
       hydrateMoveEditorFromSelectedSlot();
       hydratePokemonItemEditorFromSelectedSlot();
       persistWorkingSave();
@@ -1831,6 +1840,7 @@ async function handleSaveUpload(event) {
     selectedBoxNumber = 1;
     selectedTarget = { kind: 'party', slotIndex: 0 };
     selectedItemSlotIndex = 0;
+    resetPokemonReplacementEditor();
     hydrateMoveEditorFromSelectedSlot();
     hydratePokemonItemEditorFromSelectedSlot();
     hydrateItemEditorFromSelectedSlot();
@@ -1841,6 +1851,7 @@ async function handleSaveUpload(event) {
     workingSave = null;
     selectedTarget = null;
     selectedItemSlotIndex = 0;
+    resetPokemonReplacementEditor();
     hydrateMoveEditorFromSelectedSlot();
     hydratePokemonItemEditorFromSelectedSlot();
     hydrateItemEditorFromSelectedSlot();
@@ -2087,6 +2098,7 @@ elements.speciesNameInput.addEventListener('input', () => {
 });
 elements.shinyInput.addEventListener('change', () => {
   renderReplacementPreview();
+  syncControls();
 });
 elements.speciesNameInput.addEventListener('focus', () => {
   renderSpeciesSuggestions(elements.speciesNameInput.value);
