@@ -112,15 +112,6 @@
           <span>Make generated Pokemon shiny</span>
         </label>
 
-        <div class="editor-actions">
-          <button id="applySpeciesButton" type="button" disabled>Apply To Selected Slot</button>
-        </div>
-
-        <div class="editor-actions pokemon-delete-actions">
-          <button id="deletePokemonButton" type="button" disabled>Delete Selected Pokemon</button>
-          <button id="restoreDeletedPokemonButton" type="button" disabled>Restore Last Deleted Pokemon</button>
-        </div>
-
         <label class="field">
           <span>Held Item</span>
           <div class="field-autocomplete">
@@ -131,10 +122,6 @@
             Applies to the selected Pokemon. When you add a new Pokemon, the generated entry will use this held item too.
           </small>
         </label>
-
-        <div class="editor-actions">
-          <button id="applyPokemonItemButton" type="button" disabled>Apply Held Item To Selected Slot</button>
-        </div>
 
         <section class="inline-editor-section">
           <h3>Edit Existing Moves</h3>
@@ -171,10 +158,16 @@
           <small class="field-help">
             Existing Pokemon only. Suggestions include every legal move from level-up, TM/HM, tutor, egg, event, and pre-evolution sources, with your save randomizer and Hardcore rules applied.
           </small>
-          <div class="editor-actions">
-            <button id="applyMoveButton" type="button" disabled>Apply Moves To Selected Slot</button>
-          </div>
         </section>
+
+        <div class="editor-actions">
+          <button id="applyChangesButton" type="button" disabled>Apply Changes</button>
+        </div>
+
+        <div class="editor-actions pokemon-delete-actions">
+          <button id="deletePokemonButton" type="button" disabled>Delete Selected Pokemon</button>
+          <button id="restoreDeletedPokemonButton" type="button" disabled>Restore Last Deleted Pokemon</button>
+        </div>
 
         <div class="details-stack">
           <details class="detail-card detail-disclosure">

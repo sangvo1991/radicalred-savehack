@@ -32,7 +32,7 @@ import {
 const elements = {
   saveFileInput: document.getElementById('saveFileInput'),
   exportSaveButton: document.getElementById('exportSaveButton'),
-  applySpeciesButton: document.getElementById('applySpeciesButton'),
+  applyChangesButton: document.getElementById('applyChangesButton'),
   speciesNameInput: document.getElementById('speciesNameInput'),
   speciesSuggestionList: document.getElementById('speciesSuggestionList'),
   deletePokemonButton: document.getElementById('deletePokemonButton'),
@@ -61,12 +61,10 @@ const elements = {
   shinyInput: document.getElementById('shinyInput'),
   pokemonItemNameInput: document.getElementById('pokemonItemNameInput'),
   pokemonItemSuggestionList: document.getElementById('pokemonItemSuggestionList'),
-  applyPokemonItemButton: document.getElementById('applyPokemonItemButton'),
   currentSlotDetail: document.getElementById('currentSlotDetail'),
   replacementPreview: document.getElementById('replacementPreview'),
   pokemonItemPreview: document.getElementById('pokemonItemPreview'),
   replacementMovePreview: document.getElementById('replacementMovePreview'),
-  applyMoveButton: document.getElementById('applyMoveButton'),
   itemCountBadge: document.getElementById('itemCountBadge'),
   itemGrid: document.getElementById('itemGrid'),
   selectedItemTargetLabel: document.getElementById('selectedItemTargetLabel'),
@@ -1776,24 +1774,15 @@ function syncControls() {
   const moveSelection = buildEditedMoveSelectionState();
   const pokemonHeldItemInput = elements.pokemonItemNameInput.value.trim();
   const pokemonHeldItemMatch = pokemonHeldItemInput ? lookupItemByName(coreData, pokemonHeldItemInput) : null;
+  const speciesInput = elements.speciesNameInput.value.trim();
+  const speciesMatch = speciesInput ? lookupSpeciesByName(coreData, speciesInput) : null;
   elements.exportSaveButton.disabled = !workingSave;
-  elements.applySpeciesButton.disabled = !Boolean(
+  elements.applyChangesButton.disabled = !Boolean(
     workingSave
     && selectedTarget
-    && elements.speciesNameInput.value.trim()
+    && (speciesMatch || selectedSlot?.present)
     && (!pokemonHeldItemInput || pokemonHeldItemMatch)
-  );
-  elements.applyPokemonItemButton.disabled = !Boolean(
-    workingSave
-    && selectedTarget
-    && selectedSlot?.present
-    && (!pokemonHeldItemInput || pokemonHeldItemMatch)
-  );
-  elements.applyMoveButton.disabled = !Boolean(
-    workingSave
-    && selectedTarget
-    && selectedSlot?.present
-    && moveSelection.errors.length === 0
+    && (speciesMatch || moveSelection.errors.length === 0)
   );
   const itemQuantity = parseRequestedItemQuantity();
   const itemMatch = lookupItemByName(coreData, elements.itemNameInput.value);
@@ -1944,112 +1933,70 @@ function handleRestoreDeletedPokemon() {
   }
 }
 
-// Applies the selected species replacement to either a party slot or a box slot.
-function handleApplySpecies() {
+// Applies the replacement, held-item, and move fields through one Pokemon-editor action.
+function handleApplyChanges() {
   if (!workingSave || !selectedTarget) {
     return;
   }
 
-  const mon = lookupSpeciesByName(coreData, elements.speciesNameInput.value);
-  if (!mon) {
-    setStatus('Choose a valid Pokemon name from the loaded dex data.', 'error');
+  const speciesInput = elements.speciesNameInput.value.trim();
+  const currentSlot = getSelectedSlot();
+  if (!speciesInput && !currentSlot?.present) {
+    setStatus('Choose a Pokemon name before applying changes to an empty slot.', 'error');
     return;
   }
 
   try {
     const { itemId: heldItemId, item: heldItem } = resolveSelectedPokemonHeldItem();
 
-    if (selectedTarget.kind === 'party') {
-      applyPartySpeciesChange(workingSave, selectedTarget.slotIndex, mon.ID, coreData, heldItemId, elements.shinyInput.checked);
-    } else {
-      applyBoxSpeciesChange(workingSave, selectedTarget.boxNumber, selectedTarget.slotIndex, mon.ID, coreData, heldItemId, elements.shinyInput.checked);
-      selectedBoxNumber = selectedTarget.boxNumber;
+    if (speciesInput) {
+      const mon = lookupSpeciesByName(coreData, speciesInput);
+      if (!mon) {
+        throw new Error('Choose a valid Pokemon name from the loaded dex data.');
+      }
+
+      if (selectedTarget.kind === 'party') {
+        applyPartySpeciesChange(workingSave, selectedTarget.slotIndex, mon.ID, coreData, heldItemId, elements.shinyInput.checked);
+      } else {
+        applyBoxSpeciesChange(workingSave, selectedTarget.boxNumber, selectedTarget.slotIndex, mon.ID, coreData, heldItemId, elements.shinyInput.checked);
+        selectedBoxNumber = selectedTarget.boxNumber;
+      }
+
+      clearDeletedPokemonUndo();
+      resetPokemonReplacementEditor();
+      hydrateMoveEditorFromSelectedSlot();
+      hydratePokemonItemEditorFromSelectedSlot();
+      renderAll();
+      persistWorkingSave();
+      setStatus(
+        `Applied ${getSpeciesName(mon.ID)}${heldItem ? ` holding ${getItemName(heldItem.ID)}` : ''} to ${formatTargetLabel(selectedTarget)}.`,
+        'success'
+      );
+      return;
     }
 
-    clearDeletedPokemonUndo();
-    hydrateMoveEditorFromSelectedSlot();
-    hydratePokemonItemEditorFromSelectedSlot();
-    renderAll();
-    persistWorkingSave();
-    setStatus(
-      `Applied ${getSpeciesName(mon.ID)}${heldItem ? ` holding ${getItemName(heldItem.ID)}` : ''} to ${formatTargetLabel(selectedTarget)}.`,
-      'success'
-    );
-  } catch (error) {
-    setStatus(error.message || 'Unable to apply that Pokemon.', 'error');
-  }
-}
-
-// Applies the selected held item to the currently selected existing Pokemon slot.
-function handleApplyPokemonItem() {
-  if (!workingSave || !selectedTarget) {
-    return;
-  }
-
-  const slot = getSelectedSlot();
-  if (!slot?.present) {
-    setStatus('Select an existing Pokemon before editing its held item.', 'error');
-    return;
-  }
-
-  try {
-    const { itemId, item } = resolveSelectedPokemonHeldItem();
-
-    if (selectedTarget.kind === 'party') {
-      applyPartyHeldItemChange(workingSave, selectedTarget.slotIndex, itemId, coreData);
-    } else {
-      applyBoxHeldItemChange(workingSave, selectedTarget.boxNumber, selectedTarget.slotIndex, itemId, coreData);
-      selectedBoxNumber = selectedTarget.boxNumber;
+    const selection = buildEditedMoveSelectionState();
+    if (selection.errors.length) {
+      throw new Error(selection.errors[0]);
     }
 
-    clearDeletedPokemonUndo();
-    hydratePokemonItemEditorFromSelectedSlot();
-    renderAll();
-    persistWorkingSave();
-    setStatus(
-      item
-        ? `Applied ${getItemName(item.ID)} to ${formatTargetLabel(selectedTarget)}.`
-        : `Cleared the held item on ${formatTargetLabel(selectedTarget)}.`,
-      'success'
-    );
-  } catch (error) {
-    setStatus(error.message || 'Unable to apply that held item.', 'error');
-  }
-}
-
-// Applies the edited move list to the currently selected existing Pokemon slot.
-function handleApplyMoves() {
-  if (!workingSave || !selectedTarget) {
-    return;
-  }
-
-  const slot = getSelectedSlot();
-  if (!slot?.present) {
-    setStatus('Select an existing Pokemon before editing moves.', 'error');
-    return;
-  }
-
-  const selection = buildEditedMoveSelectionState();
-  if (selection.errors.length) {
-    setStatus(selection.errors[0], 'error');
-    return;
-  }
-
-  try {
     if (selectedTarget.kind === 'party') {
+      applyPartyHeldItemChange(workingSave, selectedTarget.slotIndex, heldItemId, coreData);
       applyPartyMoveChange(workingSave, selectedTarget.slotIndex, selection.enteredMoveIds, coreData);
     } else {
+      applyBoxHeldItemChange(workingSave, selectedTarget.boxNumber, selectedTarget.slotIndex, heldItemId, coreData);
       applyBoxMoveChange(workingSave, selectedTarget.boxNumber, selectedTarget.slotIndex, selection.enteredMoveIds, coreData);
       selectedBoxNumber = selectedTarget.boxNumber;
     }
 
     clearDeletedPokemonUndo();
     hydrateMoveEditorFromSelectedSlot();
+    hydratePokemonItemEditorFromSelectedSlot();
     renderAll();
     persistWorkingSave();
-    setStatus(`Applied ${selection.enteredMoveIds.length ? formatMoveNames(selection.enteredMoveIds) : 'an empty moveset'} to ${formatTargetLabel(selectedTarget)}.`, 'success');
+    setStatus(`Applied Pokemon changes to ${formatTargetLabel(selectedTarget)}.`, 'success');
   } catch (error) {
-    setStatus(error.message || 'Unable to apply those moves.', 'error');
+    setStatus(error.message || 'Unable to apply Pokemon changes.', 'error');
   }
 }
 
@@ -2133,12 +2080,10 @@ async function start() {
 }
 
 elements.saveFileInput.addEventListener('change', handleSaveUpload);
-elements.applySpeciesButton.addEventListener('click', handleApplySpecies);
+elements.applyChangesButton.addEventListener('click', handleApplyChanges);
 elements.deletePokemonButton.addEventListener('click', handleDeletePokemon);
 elements.restoreDeletedPokemonButton.addEventListener('click', handleRestoreDeletedPokemon);
 elements.importFavoritesButton.addEventListener('click', handleImportFavorites);
-elements.applyPokemonItemButton.addEventListener('click', handleApplyPokemonItem);
-elements.applyMoveButton.addEventListener('click', handleApplyMoves);
 elements.applyItemButton.addEventListener('click', handleApplyItem);
 elements.exportSaveButton.addEventListener('click', handleExport);
 elements.notificationBellButton.addEventListener('click', () => {
