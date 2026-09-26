@@ -14,10 +14,12 @@ import {
 import {
   applyBoxMoveChange,
   applyBoxHeldItemChange,
+  applyBoxShinyChange,
   applyPcItemChange,
   applyBoxSpeciesChange,
   applyPartyMoveChange,
   applyPartyHeldItemChange,
+  applyPartyShinyChange,
   applyPartySpeciesChange,
   applyBoxSpeciesBatchChange,
   deletePartyPokemon,
@@ -1196,7 +1198,8 @@ function hydratePokemonItemEditorFromSelectedSlot() {
 // Clears replacement-only inputs when the user targets a different Pokemon slot.
 function resetPokemonReplacementEditor() {
   elements.speciesNameInput.value = '';
-  elements.shinyInput.checked = false;
+  const slot = getSelectedSlot();
+  elements.shinyInput.checked = Boolean(slot?.present && slot.shiny);
   hideSpeciesSuggestions();
 }
 
@@ -1983,9 +1986,15 @@ function handleApplyChanges() {
     if (selectedTarget.kind === 'party') {
       applyPartyHeldItemChange(workingSave, selectedTarget.slotIndex, heldItemId, coreData);
       applyPartyMoveChange(workingSave, selectedTarget.slotIndex, selection.enteredMoveIds, coreData);
+      if (currentSlot.shiny !== elements.shinyInput.checked) {
+        applyPartyShinyChange(workingSave, selectedTarget.slotIndex, elements.shinyInput.checked, coreData);
+      }
     } else {
       applyBoxHeldItemChange(workingSave, selectedTarget.boxNumber, selectedTarget.slotIndex, heldItemId, coreData);
       applyBoxMoveChange(workingSave, selectedTarget.boxNumber, selectedTarget.slotIndex, selection.enteredMoveIds, coreData);
+      if (currentSlot.shiny !== elements.shinyInput.checked) {
+        applyBoxShinyChange(workingSave, selectedTarget.boxNumber, selectedTarget.slotIndex, elements.shinyInput.checked, coreData);
+      }
       selectedBoxNumber = selectedTarget.boxNumber;
     }
 

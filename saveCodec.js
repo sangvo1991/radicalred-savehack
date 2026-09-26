@@ -752,6 +752,32 @@ function buildPersonalityValue(trainedId, speciesId, positionSeed, shiny = false
   throw new Error('Unable to construct a shiny personality value.');
 }
 
+// Rebuilds personality only when a stored Pokemon's shiny status changes.
+// Keep its nature and ability slot stable so the edit does not otherwise alter the Pokemon.
+function buildToggledShinyPersonality(currentPersonality, trainerId, shiny) {
+  const currentValue = currentPersonality >>> 0;
+  if (isShinyPersonality(currentValue, trainerId) === shiny) {
+    return currentValue;
+  }
+
+  const targetNature = currentValue % 25;
+  const targetAbilityBit = currentValue & 0x01;
+  const trainerXor = ((trainerId & 0xFFFF) ^ (trainerId >>> 16)) & 0xFFFF;
+  const shinyXorValues = shiny ? [0, 1, 2, 3, 4, 5, 6, 7] : [8];
+
+  for (let low = targetAbilityBit; low <= 0xFFFF; low += 2) {
+    for (const personalityXor of shinyXorValues) {
+      const high = (trainerXor ^ low ^ personalityXor) & 0xFFFF;
+      const personality = ((((high << 16) >>> 0) | low) >>> 0);
+      if (personality % 25 === targetNature) {
+        return personality;
+      }
+    }
+  }
+
+  throw new Error('Unable to update this Pokemon\'s shiny status.');
+}
+
 // Selects an occupied party slot as a donor so unknown bytes stay close to a real save entry.
 function findPartyDonorBytes(state) {
   return state.partySlots.find(slot => slot.present)?.rawBytes || PARTY_TEMPLATE_BYTES;
@@ -973,6 +999,42 @@ export function applyBoxHeldItemChange(state, boxNumber, slotIndex, heldItemId, 
   const buffer = getStateBuffer(state, storageKey);
   const entryBytes = buffer.subarray(entryOffset, entryOffset + BOX_POKEMON_SIZE);
   writeUint16LE(entryBytes, BOX_POKEMON_HELD_ITEM_OFFSET, Math.max(0, Number(heldItemId) || 0));
+  hydrateSaveState(state, coreData);
+}
+
+// Changes only the shiny state of an existing party Pokemon.
+export function applyPartyShinyChange(state, slotIndex, shiny, coreData) {
+  const slot = state.partySlots?.[slotIndex];
+  if (!slot?.present) {
+    throw new Error('Only existing Pokemon can have their shiny status edited.');
+  }
+
+  const entryOffset = PARTY_POKEMON_SAVE_BLOCK1_OFFSET + slotIndex * PARTY_POKEMON_SIZE;
+  const entryBytes = state.saveBlock1.subarray(entryOffset, entryOffset + PARTY_POKEMON_SIZE);
+  const personality = buildToggledShinyPersonality(
+    readUint32LE(entryBytes, 0x00),
+    readUint32LE(entryBytes, 0x04),
+    Boolean(shiny)
+  );
+  writeUint32LE(entryBytes, 0x00, personality);
+  hydrateSaveState(state, coreData);
+}
+
+// Changes only the shiny state of an existing boxed Pokemon.
+export function applyBoxShinyChange(state, boxNumber, slotIndex, shiny, coreData) {
+  const slot = state.boxes?.[boxNumber - 1]?.slots?.[slotIndex];
+  if (!slot?.present) {
+    throw new Error('Only existing Pokemon can have their shiny status edited.');
+  }
+
+  const { storageKey, entryOffset } = getBoxSlotLocation(boxNumber, slotIndex);
+  const entryBytes = getStateBuffer(state, storageKey).subarray(entryOffset, entryOffset + BOX_POKEMON_SIZE);
+  const personality = buildToggledShinyPersonality(
+    readUint32LE(entryBytes, 0x00),
+    readUint32LE(entryBytes, 0x04),
+    Boolean(shiny)
+  );
+  writeUint32LE(entryBytes, 0x00, personality);
   hydrateSaveState(state, coreData);
 }
 
